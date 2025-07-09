@@ -14,7 +14,7 @@ const { authenticate } = require("../middleware/authMiddleware");
  * @desc Clock in with geolocation
  * @access Private (Employee)
  */
-router.post('/clock-in', clockIn);
+router.post('/clock-in', authenticate,clockIn);
 
 /**
  * @route POST /api/attendance/clock-out

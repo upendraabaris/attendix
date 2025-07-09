@@ -2,8 +2,8 @@ const pool = require("../configure/dbConfig");
 const { reverseGeocode, reverseGeocodeGoogle } = require('../services/geocodingService');
 
 const clockIn = async (req, res) => {
-  const { latitude, longitude, employeeId } = req.body;
-//   const employeeId = req.user.id;
+  const { latitude, longitude } = req.body;
+  const employeeId = req.user.employee_id;
 
   try {
     // Get address from coordinates

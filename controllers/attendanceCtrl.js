@@ -33,7 +33,8 @@ const clockIn = async (req, res) => {
 
 const clockOut = async (req, res) => {
   const { latitude, longitude } = req.body;
-  const employeeId = req.user.id;
+  const employeeId = req.user.employee_id;
+  console.log(employeeId)
 
   try {
     // Get address from coordinates

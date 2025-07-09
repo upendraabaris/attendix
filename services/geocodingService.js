@@ -1,5 +1,5 @@
 const axios = require('axios');
-require('dotenv').config();
+const dotenv = require('dotenv').config();
 
 /**
  * Reverse geocode coordinates to get address

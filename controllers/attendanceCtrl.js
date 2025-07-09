@@ -33,7 +33,7 @@ const clockIn = async (req, res) => {
 
 const clockOut = async (req, res) => {
   const { latitude, longitude } = req.body;
-  const employeeId = req.user.employee_id;
+  const employeeId = req.user.user_id;
   console.log(employeeId)
 
   try {

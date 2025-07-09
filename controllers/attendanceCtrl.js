@@ -37,7 +37,7 @@ const clockOut = async (req, res) => {
 
   try {
     // Get address from coordinates
-    let address = await reverseGeocode(latitude, longitude);
+    let address = await reverseGeocodeGoogle(latitude, longitude);
 
     // Call the PostgreSQL function to clock out
     const result = await pool.query(

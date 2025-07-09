@@ -7,6 +7,8 @@ const {
   getAllAttendance 
 } = require("../controllers/attendanceCtrl");
 
+const { authenticate } = require("../middleware/authMiddleware");
+
 /**
  * @route POST /api/attendance/clock-in
  * @desc Clock in with geolocation
@@ -19,7 +21,7 @@ router.post('/clock-in', clockIn);
  * @desc Clock out with geolocation
  * @access Private (Employee)
  */
-router.post('/clock-out', clockOut);
+router.post('/clock-out',authenticate, clockOut);
 
 /**
  * @route GET /api/attendance/my

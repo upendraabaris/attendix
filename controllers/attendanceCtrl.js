@@ -8,7 +8,7 @@ const clockIn = async (req, res) => {
   try {
     // Get address from coordinates
     let address = await reverseGeocodeGoogle(latitude, longitude);
-    console.log(address);
+    // console.log(address);
 
     // Call the PostgreSQL function to clock in
     const result = await pool.query(

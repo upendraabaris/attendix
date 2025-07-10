@@ -7,12 +7,14 @@ const {
   updateLeaveRequestStatus 
 } = require("../controllers/leaveCtrl");
 
+const { authenticate } = require("../middleware/authMiddleware");
+
 /**
  * @route POST /api/leave
  * @desc Submit a new leave request
  * @access Private (Employee)
  */
-router.post('/', createLeaveRequest);
+router.post('/', authenticate, createLeaveRequest);
 
 /**
  * @route GET /api/leave/my

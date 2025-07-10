@@ -2,7 +2,7 @@ const pool = require("../configure/dbConfig");
 
 const createLeaveRequest = async (req, res) => {
   const { type, startDate, endDate, reason } = req.body;
-  const employeeId = req.user.id;
+  const employeeId = req.user.employee_id;
 
   try {
     // Validate input

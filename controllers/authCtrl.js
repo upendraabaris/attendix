@@ -26,9 +26,23 @@ const loginAdmin = async (req, res) => {
 // Employee login with mobile (OTP will be verified separately)
 const loginEmployee = async (req, res) => {
   const { phone_number } = req.body;
-
+  console.log(phone_number)
   try {
-    const result = await db.query('SELECT id, employee_id, email, phone_number, login_type, created_at FROM users WHERE phone_number = $1 AND login_type = $2', [phone_number, 'mobile']);
+    const result = await db.query(
+      `
+      SELECT 
+  u.id AS user_id,
+  u.employee_id,
+  e.name AS employee_name,
+  u.email,
+  u.phone_number,
+  u.login_type,
+  u.created_at
+FROM users u
+JOIN employees e ON u.employee_id = e.id
+WHERE u.phone_number = $1 AND u.login_type = $2;
+
+      `, [phone_number, 'mobile']);
     const user = result.rows[0];
 
     if (!user) return res.status(404).json({ error: 'Employee not found' });

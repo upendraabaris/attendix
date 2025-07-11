@@ -1,10 +1,10 @@
 const router = require("express").Router();
-const { 
-  createLeaveRequest, 
-  getMyLeaveRequests, 
-  getEmployeeLeaveRequests, 
-  getAllLeaveRequests, 
-  updateLeaveRequestStatus 
+const {
+  createLeaveRequest,
+  getMyLeaveRequests,
+  getEmployeeLeaveRequests,
+  getAllLeaveRequests,
+  updateLeaveRequestStatus
 } = require("../controllers/leaveCtrl");
 
 const { authenticate } = require("../middleware/authMiddleware");

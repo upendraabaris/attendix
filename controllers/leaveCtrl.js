@@ -7,7 +7,7 @@ const createLeaveRequest = async (req, res) => {
   try {
     // Validate input
     if (!type || !startDate || !endDate) {
-        return res.status(400).json({
+      return res.status(400).json({
         statusCode: 400,
         message: 'Type, start date, and end date are required'
       });
@@ -40,7 +40,7 @@ const createLeaveRequest = async (req, res) => {
  * @param {Object} res - Express response object
  */
 const getMyLeaveRequests = async (req, res) => {
-  const employeeId = req.user.id;
+  const employeeId = req.user.employee_id;
 
   try {
     const result = await pool.query(
@@ -98,7 +98,7 @@ const getEmployeeLeaveRequests = async (req, res) => {
  * @param {Object} res - Express response object
  */
 const getAllLeaveRequests = async (req, res) => {
-//   const { status } = req.query;
+  //   const { status } = req.query;
 
   try {
     const result = await pool.query(

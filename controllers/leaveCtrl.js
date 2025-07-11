@@ -40,18 +40,33 @@ const createLeaveRequest = async (req, res) => {
  * @param {Object} res - Express response object
  */
 const getMyLeaveRequests = async (req, res) => {
-  const employeeId = req.user.id;
+  const employeeId = req.user.employee_id;
 
   try {
     const result = await pool.query(
       'SELECT * FROM get_employee_leave_requests($1)',
       [employeeId]
     );
+     // Format start_date and end_date in each row
+    const formattedRows = result.rows.map((row) => ({
+  ...row,
+  start_date: new Date(row.start_date).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }),
+  end_date: new Date(row.end_date).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }),
+}));
+
 
     res.status(200).json({
       statusCode: 200,
       message: 'Leave requests retrieved successfully',
-      data: result.rows
+      data: formattedRows
     });
   } catch (error) {
     console.error('Error retrieving leave requests:', error);

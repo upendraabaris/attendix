@@ -21,7 +21,7 @@ router.post('/', authenticate, createLeaveRequest);
  * @desc Get leave requests for logged-in employee
  * @access Private (Employee)
  */
-router.get('/my', getMyLeaveRequests);
+router.get('/my',authenticate, getMyLeaveRequests);
 
 /**
  * @route GET /api/leave/employee/:employeeId

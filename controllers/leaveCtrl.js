@@ -47,20 +47,20 @@ const getMyLeaveRequests = async (req, res) => {
       'SELECT * FROM get_employee_leave_requests($1)',
       [employeeId]
     );
-     // Format start_date and end_date in each row
+    // Format start_date and end_date in each row
     const formattedRows = result.rows.map((row) => ({
-  ...row,
-  start_date: new Date(row.start_date).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  }),
-  end_date: new Date(row.end_date).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  }),
-}));
+      ...row,
+      start_date: new Date(row.start_date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }),
+      end_date: new Date(row.end_date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }),
+    }));
 
 
     res.status(200).json({

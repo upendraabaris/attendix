@@ -27,7 +27,7 @@ const clockIn = async (req, res) => {
       statusCode: 500,
       message: error.message || 'Failed to clock in',
       error: error.message
-      });
+    });
   }
 };
 
@@ -62,7 +62,7 @@ const clockOut = async (req, res) => {
 };
 
 const getMyAttendance = async (req, res) => {
-  const employeeId = req.user.id;
+  const employeeId = req.user.employee_id;
   const { startDate, endDate } = req.query;
 
   // Default to current month if dates not provided
@@ -91,7 +91,7 @@ const getMyAttendance = async (req, res) => {
 };
 
 const getEmployeeAttendance = async (req, res) => {
-  const { employeeId } = req.params;
+  const { employeeId } = req.user.employee_id;
   const { startDate, endDate } = req.query;
 
   // Default to current month if dates not provided

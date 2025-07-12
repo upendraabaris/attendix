@@ -60,14 +60,20 @@ const clockOut = async (req, res) => {
     });
   }
 };
+const getISTDate = () => {
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(now.getTime() + istOffset);
+  return istDate.toISOString().split('T')[0];
+};
 
 const getMyAttendance = async (req, res) => {
   const employeeId = req.user.employee_id;
   const { startDate, endDate } = req.query;
 
-  // Default to current month if dates not provided
-  const start = startDate || new Date(new Date().setDate(1)).toISOString().split('T')[0];
-  const end = endDate || new Date().toISOString().split('T')[0];
+  const today = getISTDate();
+  const start = startDate || today;
+  const end = endDate || today;
 
   try {
     const result = await pool.query(
@@ -75,20 +81,39 @@ const getMyAttendance = async (req, res) => {
       [employeeId, start, end]
     );
 
-    const formattedRows = result.rows.map((row) => ({
-      ...row,
-      timestamp: new Date(row.timestamp).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      }),
+    // 🧠 Flattened list grouped by date
+    const grouped = {};
+
+    result.rows.forEach(row => {
+      const dateKey = new Date(row.timestamp).toISOString().split('T')[0];
+
+      if (!grouped[dateKey]) {
+        grouped[dateKey] = [];
+      }
+
+      grouped[dateKey].push({
+        type: row.type,
+        time: new Date(new Date(row.timestamp).getTime() + (5.5 * 60 * 60 * 1000)).toLocaleTimeString('en-IN', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        }),
+        address: row.address,
+        employee_name: row.employee_name
+      });
+    });
+
+    const finalData = Object.entries(grouped).map(([date, records]) => ({
+      date,
+      records
     }));
 
     res.status(200).json({
       statusCode: 200,
       message: 'Attendance records retrieved successfully',
-      data: formattedRows
+      data: finalData
     });
+
   } catch (error) {
     console.error('Error retrieving attendance:', error);
     res.status(500).json({
@@ -98,7 +123,6 @@ const getMyAttendance = async (req, res) => {
     });
   }
 };
-
 const getEmployeeAttendance = async (req, res) => {
   const { employeeId } = req.user.employee_id;
   const { startDate, endDate } = req.query;

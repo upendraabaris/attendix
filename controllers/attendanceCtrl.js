@@ -75,10 +75,19 @@ const getMyAttendance = async (req, res) => {
       [employeeId, start, end]
     );
 
+    const formattedRows = result.rows.map((row) => ({
+      ...row,
+      timestamp: new Date(row.timestamp).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }),
+    }));
+
     res.status(200).json({
       statusCode: 200,
       message: 'Attendance records retrieved successfully',
-      data: result.rows
+      data: formattedRows
     });
   } catch (error) {
     console.error('Error retrieving attendance:', error);

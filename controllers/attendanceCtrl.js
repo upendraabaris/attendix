@@ -81,37 +81,25 @@ const getMyAttendance = async (req, res) => {
       [employeeId, start, end]
     );
 
-    // 🧠 Flattened list grouped by date
-    const grouped = {};
+    const formattedRows = result.rows.map((row) => {
+  const istDate = new Date(row.timestamp);
+  istDate.setMinutes(istDate.getMinutes() + 330); // Convert to IST (UTC+5:30)
 
-    result.rows.forEach(row => {
-      const dateKey = new Date(row.timestamp).toISOString().split('T')[0];
-
-      if (!grouped[dateKey]) {
-        grouped[dateKey] = [];
-      }
-
-      grouped[dateKey].push({
-        type: row.type,
-        time: new Date(new Date(row.timestamp).getTime() + (5.5 * 60 * 60 * 1000)).toLocaleTimeString('en-IN', {
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true
-        }),
-        address: row.address,
-        employee_name: row.employee_name
-      });
-    });
-
-    const finalData = Object.entries(grouped).map(([date, records]) => ({
-      date,
-      records
-    }));
+  return {
+    ...row,
+    date: istDate.toISOString().split('T')[0], // "YYYY-MM-DD"
+    time: istDate.toLocaleTimeString('en-IN', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    }) // "10:03 AM"
+  };
+});
 
     res.status(200).json({
       statusCode: 200,
       message: 'Attendance records retrieved successfully',
-      data: finalData
+      data: formattedRows
     });
 
   } catch (error) {
@@ -123,6 +111,7 @@ const getMyAttendance = async (req, res) => {
     });
   }
 };
+
 const getEmployeeAttendance = async (req, res) => {
   const { employeeId } = req.user.employee_id;
   const { startDate, endDate } = req.query;

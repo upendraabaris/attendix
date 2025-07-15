@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 
 // Admin login with email + password
 const loginAdmin = async (req, res) => {
-    console.log('Request body:', req.body);
+  console.log('Request body:', req.body);
   const { email, password } = req.body;
 
   try {

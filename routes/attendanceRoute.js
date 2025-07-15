@@ -30,18 +30,6 @@ router.post('/clock-out', authenticate, clockOut);
  */
 router.get('/my', authenticate, getMyAttendance);
 
-/**
- * @route GET /api/attendance/employee/:employeeId
- * @desc Get attendance records for a specific employee
- * @access Private (Admin)
- */
-router.get('/employee', authenticate, getEmployeeAttendance);
-
-/**
- * @route GET /api/attendance
- * @desc Get all attendance records
- * @access Private (Admin)
- */
-router.get('/', getAllAttendance);
-
 module.exports = router;
+
+//Get user api 

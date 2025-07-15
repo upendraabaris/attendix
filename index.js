@@ -20,12 +20,14 @@ app.use(cors()); // ✅ CORRECT
 const attendanceRoute = require("./routes/attendanceRoute");
 const leaveRoute = require("./routes/leaveRoute");
 const authRoutes = require('./routes/authRoute');
-
-app.use('/api/attendance',attendanceRoute);
-app.use('/api/leave',leaveRoute);
+const employeesRoute = require('./routes/employeesRoute');
+app.use('/api/attendance', attendanceRoute);
+app.use('/api/leave', leaveRoute);
 app.use('/api/auth', authRoutes);
+app.use('/api/employee', employeesRoute);
 
-app.listen(4000,()=>{
-    console.log(`server is running on port: 4000`)
+app.listen(4000, () => {
+  console.log(`server is running on port: 4000`)
 })
+
 

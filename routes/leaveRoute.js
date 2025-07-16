@@ -4,6 +4,7 @@ const {
   getMyLeaveRequests,
   getEmployeeLeaveRequests,
   getAllLeaveRequests,
+  getPendingLeaveRequests,
   updateLeaveRequestStatus
 } = require("../controllers/leaveCtrl");
 
@@ -43,5 +44,8 @@ router.get('/get', getAllLeaveRequests);
  * @access Private (Admin)
  */
 router.put('/update/:leaveId', updateLeaveRequestStatus);
+
+
+router.get('/leave-requests/pending', getPendingLeaveRequests);
 
 module.exports = router;

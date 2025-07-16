@@ -137,6 +137,28 @@ const getAllLeaveRequests = async (req, res) => {
 };
 
 /**
+ * Get only pending leave requests (admin only)
+ */
+const getPendingLeaveRequests = async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM get_pending_leave_requests()');
+
+    res.status(200).json({
+      statusCode: 200,
+      message: 'Pending leave requests retrieved successfully',
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Error retrieving pending leave requests:', error);
+    res.status(500).json({
+      statusCode: 500,
+      message: 'Failed to retrieve pending leave requests',
+      error: error.message
+    });
+  }
+};
+
+/**
  * Update leave request status (admin only)
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
@@ -195,5 +217,6 @@ module.exports = {
   getMyLeaveRequests,
   getEmployeeLeaveRequests,
   getAllLeaveRequests,
+  getPendingLeaveRequests,
   updateLeaveRequestStatus
 };

@@ -1,5 +1,5 @@
 const router = require("express").Router();
-const { getAllEmployees, addEmployee, getLatestActivity } = require("../controllers/employeeCtrl")
+const { getAllEmployees, addEmployee, getLatestActivity, getEmployeeById } = require("../controllers/employeeCtrl")
 const {
   getEmployeeAttendance,
   getAllAttendance
@@ -34,9 +34,12 @@ router.get('/getEmployees', getAllEmployees);
  * @desc Get leave requests for a specific employee
  * @access Private (Admin)
  */
-router.post('/addEmployee', addEmployee);
+
+router.post('/addEmployee', authenticate, addEmployee);
 
 router.get('/latestActivity', authenticate, getLatestActivity);
+
+router.get('/getEmployeeById/:id', getEmployeeById);
 
 
 

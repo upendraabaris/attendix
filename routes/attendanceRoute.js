@@ -30,6 +30,9 @@ router.post('/clock-out', authenticate, clockOut);
  */
 router.get('/my', authenticate, getMyAttendance);
 
+
+router.get('/admin/all-employee-attendance', getAllAttendance);
+
 module.exports = router;
 
 //Get user api 

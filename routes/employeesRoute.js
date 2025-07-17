@@ -1,5 +1,5 @@
 const router = require("express").Router();
-const { getAllEmployees, addEmployee, getLatestActivity, getEmployeeById } = require("../controllers/employeeCtrl")
+const { getAllEmployees, addEmployee, getLatestActivity, getEmployeeById, updateEmployee } = require("../controllers/employeeCtrl")
 const {
   getEmployeeAttendance,
   getAllAttendance
@@ -40,6 +40,8 @@ router.post('/addEmployee', authenticate, addEmployee);
 router.get('/latestActivity', authenticate, getLatestActivity);
 
 router.get('/getEmployeeById/:id', getEmployeeById);
+
+router.put('/updateEmployee/:id', updateEmployee);
 
 
 

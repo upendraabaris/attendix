@@ -150,5 +150,38 @@ const getEmployeeById = async (req, res) => {
   }
 };
 
+// Update Employee
 
-module.exports = { getAllEmployees, addEmployee, getLatestActivity, getEmployeeById };
+const updateEmployee = async (req, res) => {
+  const { id } = req.params; // employee ID in the URL
+  const {
+    name,
+    email,
+    phone,
+    role
+  } = req.body;
+
+  try {
+    const result = await pool.query(
+      `SELECT * FROM update_employee($1, $2, $3, $4, $5)`,
+      [id, name, email, phone, role]
+    );
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: 'Employee and user updated successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating employee and user:', error);
+    return res.status(500).json({
+      statusCode: 500,
+      message: 'Failed to update employee',
+      error: error.message
+    });
+  }
+};
+
+
+
+module.exports = { getAllEmployees, addEmployee, getLatestActivity, getEmployeeById, updateEmployee };

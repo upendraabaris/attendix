@@ -82,19 +82,19 @@ const getMyAttendance = async (req, res) => {
     );
 
     const formattedRows = result.rows.map((row) => {
-  const istDate = new Date(row.timestamp);
-  istDate.setMinutes(istDate.getMinutes() + 330); // Convert to IST (UTC+5:30)
+      const istDate = new Date(row.timestamp);
+      istDate.setMinutes(istDate.getMinutes() + 330); // Convert to IST (UTC+5:30)
 
-  return {
-    ...row,
-    date: istDate.toISOString().split('T')[0], // "YYYY-MM-DD"
-    time: istDate.toLocaleTimeString('en-IN', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    }) // "10:03 AM"
-  };
-});
+      return {
+        ...row,
+        date: istDate.toISOString().split('T')[0], // "YYYY-MM-DD"
+        time: istDate.toLocaleTimeString('en-IN', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        }) // "10:03 AM"
+      };
+    });
 
     res.status(200).json({
       statusCode: 200,

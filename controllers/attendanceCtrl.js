@@ -141,6 +141,8 @@ const getEmployeeAttendance = async (req, res) => {
   }
 };
 
+
+
 const getAllAttendance = async (req, res) => {
   const { startDate, endDate, employeeId } = req.query;
 
@@ -151,23 +153,37 @@ const getAllAttendance = async (req, res) => {
     let result;
 
     if (employeeId && employeeId !== 'all') {
-      // 👇 Call function for single employee
       result = await pool.query(
         'SELECT * FROM get_employee_attendance($1, $2, $3)',
         [parseInt(employeeId), start, end]
       );
     } else {
-      // 👇 Call function for all employees
       result = await pool.query(
         'SELECT * FROM get_all_attendance($1, $2)',
         [start, end]
       );
     }
 
+    const updatedRows = result.rows.map((row) => {
+      const utcDate = new Date(row.timestamp);
+      const istDate = new Date(utcDate.getTime() + 330 * 60 * 1000); // +5:30 hrs
+
+      const yyyy = istDate.getFullYear();
+      const mm = String(istDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(istDate.getDate()).padStart(2, '0');
+      const HH = String(istDate.getHours()).padStart(2, '0');
+      const MM = String(istDate.getMinutes()).padStart(2, '0');
+
+      return {
+        ...row,
+        timestamp: `${yyyy}-${mm}-${dd} ${HH}:${MM}` // ✅ Only date and HH:mm
+      };
+    });
+
     res.status(200).json({
       statusCode: 200,
       message: 'Attendance records retrieved successfully',
-      data: result.rows
+      data: updatedRows
     });
   } catch (error) {
     console.error('Error retrieving attendance:', error);

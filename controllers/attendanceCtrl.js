@@ -142,17 +142,27 @@ const getEmployeeAttendance = async (req, res) => {
 };
 
 const getAllAttendance = async (req, res) => {
-  const { startDate, endDate } = req.query;
+  const { startDate, endDate, employeeId } = req.query;
 
-  // Default to current month if dates not provided
   const start = startDate || new Date(new Date().setDate(1)).toISOString().split('T')[0];
   const end = endDate || new Date().toISOString().split('T')[0];
 
   try {
-    const result = await pool.query(
-      'SELECT * FROM get_all_attendance($1, $2)',
-      [start, end]
-    );
+    let result;
+
+    if (employeeId && employeeId !== 'all') {
+      // 👇 Call function for single employee
+      result = await pool.query(
+        'SELECT * FROM get_employee_attendance($1, $2, $3)',
+        [parseInt(employeeId), start, end]
+      );
+    } else {
+      // 👇 Call function for all employees
+      result = await pool.query(
+        'SELECT * FROM get_all_attendance($1, $2)',
+        [start, end]
+      );
+    }
 
     res.status(200).json({
       statusCode: 200,

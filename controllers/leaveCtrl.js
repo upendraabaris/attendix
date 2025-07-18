@@ -144,6 +144,7 @@ const getPendingLeaveRequests = async (req, res) => {
     const result = await pool.query('SELECT * FROM get_pending_leave_requests()');
 
     res.status(200).json({
+      success: true, // ✅ Add this line
       statusCode: 200,
       message: 'Pending leave requests retrieved successfully',
       data: result.rows
@@ -151,6 +152,7 @@ const getPendingLeaveRequests = async (req, res) => {
   } catch (error) {
     console.error('Error retrieving pending leave requests:', error);
     res.status(500).json({
+      success: false, // ✅ Add this line too
       statusCode: 500,
       message: 'Failed to retrieve pending leave requests',
       error: error.message

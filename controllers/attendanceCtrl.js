@@ -1,6 +1,20 @@
 const pool = require("../configure/dbConfig");
 const { reverseGeocode, reverseGeocodeGoogle } = require('../services/geocodingService');
 
+
+const formatToIST = (utcDateTimeString) => {
+  if (!utcDateTimeString) return "–";
+
+  const utcDate = new Date(utcDateTimeString);
+  const istDate = new Date(utcDate.getTime() + 5.5 * 60 * 60 * 1000);
+
+  return istDate.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+};
+
 const clockIn = async (req, res) => {
   const { latitude, longitude } = req.body;
   const employeeId = req.user.employee_id;
@@ -140,9 +154,6 @@ const getEmployeeAttendance = async (req, res) => {
     });
   }
 };
-
-
-
 const getAllAttendance = async (req, res) => {
   const { startDate, endDate, employeeId } = req.query;
 
@@ -150,35 +161,47 @@ const getAllAttendance = async (req, res) => {
   const end = endDate || new Date().toISOString().split('T')[0];
 
   try {
-    let result;
+    const empId = employeeId && employeeId !== 'all' ? parseInt(employeeId) : 0;
 
-    if (employeeId && employeeId !== 'all') {
-      result = await pool.query(
-        'SELECT * FROM get_employee_attendance($1, $2, $3)',
-        [parseInt(employeeId), start, end]
-      );
-    } else {
-      result = await pool.query(
-        'SELECT * FROM get_all_attendance($1, $2)',
-        [start, end]
-      );
-    }
-
+    const result = await pool.query(
+      'SELECT * FROM get_combined_attendance($1, $2, $3)',
+      [empId, start, end]
+    );
     const updatedRows = result.rows.map((row) => {
-      const utcDate = new Date(row.timestamp);
-      const istDate = new Date(utcDate.getTime() + 330 * 60 * 1000); // +5:30 hrs
+      const inTime = row.clock_in ? new Date(new Date(row.clock_in).getTime() + 330 * 60 * 1000) : null;
+      const outTime = row.clock_out ? new Date(new Date(row.clock_out).getTime() + 330 * 60 * 1000) : null;
 
-      const yyyy = istDate.getFullYear();
-      const mm = String(istDate.getMonth() + 1).padStart(2, '0');
-      const dd = String(istDate.getDate()).padStart(2, '0');
-      const HH = String(istDate.getHours()).padStart(2, '0');
-      const MM = String(istDate.getMinutes()).padStart(2, '0');
+      let workedTime = 'Missing Clock Out'; // Default message
+
+      if (inTime && outTime) {
+        const diffMs = outTime - inTime;
+
+        if (diffMs > 0) {
+          const hrs = Math.floor(diffMs / (1000 * 60 * 60));
+          const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+          workedTime = `${hrs}h ${mins}m`;
+        } else {
+          workedTime = 'Invalid time (Out before In)';
+        }
+      }
 
       return {
         ...row,
-        timestamp: `${yyyy}-${mm}-${dd} ${HH}:${MM}` // ✅ Only date and HH:mm
+        clock_in: inTime?.toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }),
+        clock_out: outTime?.toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }),
+        worked_time: workedTime,
+        date: inTime?.toISOString().split('T')[0] || null
       };
     });
+
 
     res.status(200).json({
       statusCode: 200,
@@ -194,6 +217,7 @@ const getAllAttendance = async (req, res) => {
     });
   }
 };
+
 
 module.exports = {
   clockIn,

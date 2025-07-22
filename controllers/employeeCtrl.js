@@ -75,7 +75,7 @@ const addEmployee = async (req, res) => {
 
     return res.status(200).json({
       statusCode: 200,
-      message: 'Employee and user added successfully',
+      message: 'Employee added successfully',
       data: result.rows[0]
     });
   } catch (error) {

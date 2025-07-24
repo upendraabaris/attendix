@@ -30,14 +30,29 @@ const getMyTasks = async (req, res) => {
       [employeeId]
     );
 
+    const formattedTasks = result.rows.map(task => {
+      const dueDate = new Date(task.due_date);
+      const options = { year: 'numeric', month: 'long', day: 'numeric' };
+      const formattedDueDate = dueDate.toLocaleDateString('en-IN', options); // "July 24, 2025"
+
+      return {
+        ...task,
+        due_date: formattedDueDate
+      };
+    });
+
     res.status(200).json({
       statusCode: 200,
       message: 'Tasks fetched successfully',
-      data: result.rows
+      data: formattedTasks
     });
   } catch (error) {
     console.error('Error fetching tasks:', error);
-    res.status(500).json({ statusCode: 500, message: 'Failed to fetch tasks', error: error.message });
+    res.status(500).json({
+      statusCode: 500,
+      message: 'Failed to fetch tasks',
+      error: error.message
+    });
   }
 };
 

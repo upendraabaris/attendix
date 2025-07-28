@@ -24,6 +24,8 @@ const authRoutes = require('./routes/authRoute');
 const employeesRoute = require('./routes/employeesRoute');
 const tasksRoute = require('./routes/tasksRoute')
 
+const tasksRoute = require('./routes/tasksRoute');
+
 app.use('/api/attendance', attendanceRoute);
 app.use('/api/leave', leaveRoute);
 app.use('/api/auth', authRoutes);

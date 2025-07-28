@@ -4,6 +4,7 @@ const pool = require('./configure/dbConfig');
 const app = express();
 const cors = require("cors");
 
+
 pool.query('SELECT NOW()', (err, result) => {
   if (err) {
     console.error('❌ Database connection failed:', err.message);
@@ -21,11 +22,14 @@ const attendanceRoute = require("./routes/attendanceRoute");
 const leaveRoute = require("./routes/leaveRoute");
 const authRoutes = require('./routes/authRoute');
 const employeesRoute = require('./routes/employeesRoute');
+const tasksRoute = require('./routes/tasksRoute')
+
 app.use('/api/attendance', attendanceRoute);
 app.use('/api/leave', leaveRoute);
 app.use('/api/auth', authRoutes);
 app.use('/api/employee', employeesRoute);
 app.use('/api/admin', leaveRoute);  // ✅ clean base path
+app.use('/api/task', tasksRoute);
 
 
 app.listen(4000, () => {

@@ -7,17 +7,35 @@ const loginAdmin = async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    const result = (await db.query('SELECT * FROM users WHERE email = $1 AND login_type = $2', [email, 'email']));
-    const user = result.rows[0];
+    const result = await db.query(`
+      SELECT 
+        u.*, 
+        e.organization_id 
+      FROM users u
+      JOIN employees e ON u.employee_id = e.id
+      WHERE u.email = $1 AND u.login_type = $2
+    `, [email, 'email']);
 
+    const user = result.rows[0];
     if (!user) return res.status(404).json({ error: 'Admin not found' });
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
-    const token = jwt.sign({ id: user.id, employee_id: user.employee_id, role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '1d' });
+    const token = jwt.sign(
+      {
+        id: user.id,
+        employee_id: user.employee_id,
+        organization_id: user.organization_id,  // ✅ include in token
+        role: 'admin'
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
     res.json({ token, user });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Login error' });
   }
 };
@@ -36,7 +54,8 @@ const loginEmployee = async (req, res) => {
   u.email,
   u.phone_number,
   u.login_type,
-  u.created_at
+  u.created_at,
+  e.organization_id
 FROM users u
 JOIN employees e ON u.employee_id = e.id
 WHERE u.phone_number = $1 AND u.login_type = $2;

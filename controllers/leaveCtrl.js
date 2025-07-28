@@ -214,11 +214,44 @@ const updateLeaveRequestStatus = async (req, res) => {
 };
 
 
+// const admin = require("./firebaseAdmin");
+// const __mobileNotification = async (device_id, title, body = " ") => {
+//   try {
+//     const message = {
+//       token: device_id,
+//       notification: {
+//         title: title,
+//         body: body,
+//       },
+//     };
+
+//     const response = await admin
+//       .messaging()
+//       .send(message)
+//       .then((response) => {
+//         console.log("Notification sent:", response);
+//       })
+//       .catch((error) => {
+//         console.error("Error sending notification:", error);
+//       });
+//     return {
+//       success: true,
+//       statusCode: 200,
+//       message: "Notification sent successfully",
+//       response,
+//     };
+//   } catch (error) {
+//     console.error("Error sending notification:", error);
+//   }
+// }
+
+
 module.exports = {
   createLeaveRequest,
   getMyLeaveRequests,
   getEmployeeLeaveRequests,
   getAllLeaveRequests,
   getPendingLeaveRequests,
-  updateLeaveRequestStatus
+  updateLeaveRequestStatus,
+  // __mobileNotification
 };

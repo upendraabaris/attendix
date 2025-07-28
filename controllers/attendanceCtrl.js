@@ -155,27 +155,35 @@ const getEmployeeAttendance = async (req, res) => {
   }
 };
 const getAllAttendance = async (req, res) => {
-  const { startDate, endDate, employeeId } = req.query;
+  const { startDate, endDate, employeeId, organizationId } = req.query;
 
   const start = startDate || new Date(new Date().setDate(1)).toISOString().split('T')[0];
   const end = endDate || new Date().toISOString().split('T')[0];
 
   try {
     const empId = employeeId && employeeId !== 'all' ? parseInt(employeeId) : 0;
+    const orgId = organizationId ? parseInt(organizationId) : null;
+
+    if (!orgId) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: 'Missing required parameter: organizationId'
+      });
+    }
 
     const result = await pool.query(
-      'SELECT * FROM get_combined_attendance($1, $2, $3)',
-      [empId, start, end]
+      'SELECT * FROM get_combined_attendance($1, $2, $3, $4)',
+      [empId, start, end, orgId]
     );
+
     const updatedRows = result.rows.map((row) => {
       const inTime = row.clock_in ? new Date(new Date(row.clock_in).getTime() + 330 * 60 * 1000) : null;
       const outTime = row.clock_out ? new Date(new Date(row.clock_out).getTime() + 330 * 60 * 1000) : null;
 
-      let workedTime = 'Missing Clock Out'; // Default message
+      let workedTime = 'Missing Clock Out';
 
       if (inTime && outTime) {
         const diffMs = outTime - inTime;
-
         if (diffMs > 0) {
           const hrs = Math.floor(diffMs / (1000 * 60 * 60));
           const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -202,7 +210,6 @@ const getAllAttendance = async (req, res) => {
       };
     });
 
-
     res.status(200).json({
       statusCode: 200,
       message: 'Attendance records retrieved successfully',
@@ -217,6 +224,7 @@ const getAllAttendance = async (req, res) => {
     });
   }
 };
+
 
 
 module.exports = {

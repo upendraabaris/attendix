@@ -42,8 +42,7 @@ const loginAdmin = async (req, res) => {
 
 // Employee login with mobile (OTP will be verified separately)
 const loginEmployee = async (req, res) => {
-  const { phone_number } = req.body;
-  console.log(phone_number)
+  const { phone_number, organization_id } = req.body;
   try {
     const result = await db.query(
       `
@@ -58,9 +57,9 @@ const loginEmployee = async (req, res) => {
   e.organization_id
 FROM users u
 JOIN employees e ON u.employee_id = e.id
-WHERE u.phone_number = $1 AND u.login_type = $2;
+WHERE u.phone_number = $1 AND u.login_type = $2 AND e.organization_id = $3;
 
-      `, [phone_number, 'mobile']);
+      `, [phone_number, 'mobile', organization_id]);
     const user = result.rows[0];
 
     if (!user) return res.status(404).json({ error: 'Employee not found' });
@@ -74,5 +73,31 @@ WHERE u.phone_number = $1 AND u.login_type = $2;
   }
 };
 
+//Get all orgaizations list by phone number
+const getOrganizationsByPhone = async (req, res) => {
+  const { phone_number } = req.body;
 
-module.exports = { loginAdmin, loginEmployee }
+  if (!phone_number) {
+    return res.status(400).json({ error: 'Phone number is required' });
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT * FROM get_organizations_by_phone($1);`,
+      [phone_number]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No organizations found for this phone number' });
+    }
+
+    return res.status(200).json({ data: result.rows });
+  } catch (error) {
+    console.error('Error fetching organizations:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
+};
+
+
+
+module.exports = { loginAdmin, loginEmployee, getOrganizationsByPhone }

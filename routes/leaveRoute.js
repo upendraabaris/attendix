@@ -43,7 +43,7 @@ router.get('/get', getAllLeaveRequests);
  * @desc Update leave request status (approve/reject)
  * @access Private (Admin)
  */
-router.put('/update/:leaveId', updateLeaveRequestStatus);
+router.put('/update/:leaveId', authenticate, updateLeaveRequestStatus);
 
 
 router.get('/admin/leave-requests/pending', getPendingLeaveRequests);

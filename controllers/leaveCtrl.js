@@ -167,7 +167,8 @@ const getPendingLeaveRequests = async (req, res) => {
  */
 const updateLeaveRequestStatus = async (req, res) => {
   const { leaveId } = req.params;
-  const { status, id: updated_by } = req.body;
+  const updated_by = req.user.employee_id;
+  const { status } = req.body;
 
   try {
     // Validate input

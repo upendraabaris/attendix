@@ -114,10 +114,10 @@ const getEmployeeLeaveRequests = async (req, res) => {
  */
 const getAllLeaveRequests = async (req, res) => {
   //   const { status } = req.query;
-
+  const orgID = req.user.organization_id;
   try {
     const result = await pool.query(
-      'SELECT * FROM get_all_leave_requests()',
+      `SELECT * FROM get_all_leave_requests(${orgID})`,
     );
     console.log(result)
 

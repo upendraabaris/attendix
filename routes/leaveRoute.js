@@ -36,7 +36,7 @@ router.get('/employee/:employeeId', getEmployeeLeaveRequests);
  * @desc Get all leave requests
  * @access Private (Admin)
  */
-router.get('/get', getAllLeaveRequests);
+router.get('/get', authenticate, getAllLeaveRequests);
 
 /**
  * @route PUT /api/leave/:leaveId

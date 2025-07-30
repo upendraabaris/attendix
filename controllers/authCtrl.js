@@ -91,7 +91,7 @@ const getOrganizationsByPhone = async (req, res) => {
       return res.status(404).json({ message: 'No organizations found for this phone number' });
     }
 
-    return res.status(200).json({ data: result.rows });
+    return res.status(200).json({ statusCode: 200, data: result.rows });
   } catch (error) {
     console.error('Error fetching organizations:', error);
     return res.status(500).json({ error: 'Server error' });

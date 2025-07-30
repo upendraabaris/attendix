@@ -1,8 +1,9 @@
 const pool = require("../configure/dbConfig");
 
 const getAllEmployees = async (req, res) => {
+  const orgID = req.user.organization_id;
   try {
-    const result = await pool.query('SELECT * FROM get_all_employees()');
+    const result = await pool.query(`SELECT * FROM get_all_employees(${orgID})`);
     res.status(200).json(result.rows);
   } catch (error) {
     console.error('Error fetching employees:', error);

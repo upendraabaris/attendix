@@ -26,7 +26,7 @@ router.get('/', getAllAttendance);
  * @desc Get leave requests for a specific employee
  * @access Private (Admin)
  */
-router.get('/getEmployees', getAllEmployees);
+router.get('/getEmployees', authenticate, getAllEmployees);
 
 
 /**

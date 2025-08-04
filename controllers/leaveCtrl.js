@@ -112,6 +112,7 @@ const getEmployeeLeaveRequests = async (req, res) => {
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  */
+
 const getAllLeaveRequests = async (req, res) => {
   //   const { status } = req.query;
   const orgID = req.user.organization_id;
@@ -121,11 +122,27 @@ const getAllLeaveRequests = async (req, res) => {
     );
     console.log(result)
 
+    const formattedDate = result.rows.map((row) => ({
+      ...row,
+      start_date: new Date(row.start_date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      }),
+      end_date: new Date(row.end_date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      })
+    }));
+    console.log('Formatted Result:', formattedDate);
+
     return res.status(200).json({
       statusCode: 200,
       message: 'Leave requests retrieved successfully',
-      data: result.rows
+      data: formattedDate
     });
+
   } catch (error) {
     console.error('Error retrieving leave requests:', error);
     return res.status(500).json({

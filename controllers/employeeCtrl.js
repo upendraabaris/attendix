@@ -159,19 +159,20 @@ const updateEmployee = async (req, res) => {
     name,
     email,
     phone,
-    role
+    role,
+    status // ✅ Include status from frontend
   } = req.body;
 
   try {
     const result = await pool.query(
-      `SELECT * FROM update_employee($1, $2, $3, $4, $5)`,
-      [id, name, email, phone, role]
+      `SELECT * FROM update_employee($1, $2, $3, $4, $5, $6)`,
+      [id, name, email, phone, role, status] // ✅ Pass 6 parameters
     );
 
     return res.status(200).json({
       statusCode: 200,
       message: 'Employee and user updated successfully',
-      data: result.rows[0]
+      data: result.rows[0] || {} // function returns void, no rows expected
     });
   } catch (error) {
     console.error('Error updating employee and user:', error);

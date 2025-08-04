@@ -54,16 +54,26 @@ const loginEmployee = async (req, res) => {
   u.phone_number,
   u.login_type,
   u.created_at,
-  e.organization_id
-FROM users u
-JOIN employees e ON u.employee_id = e.id
-WHERE u.phone_number = $1 AND u.login_type = $2 AND e.organization_id = $3;
+  e.organization_id,
+      e.status AS employee_status
+      FROM users u
+      JOIN employees e ON u.employee_id = e.id
+      WHERE 
+        u.phone_number = $1 
+        AND u.login_type = $2 
+        AND e.organization_id = $3
+        
 
       `, [phone_number, 'mobile', organization_id]);
     const user = result.rows[0];
 
-    if (!user) return res.status(404).json({ error: 'Employee not found' });
+    if (!user) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
 
+    if (user.employee_status !== 'active') {
+      return res.status(403).json({ error: 'Employee account is inactive' });
+    }
     // Assuming OTP verification already done via frontend/third-party API
 
     const token = jwt.sign({ user_id: user.id, employee_id: user.employee_id, role: 'employee' }, process.env.JWT_SECRET, { expiresIn: '1d' });

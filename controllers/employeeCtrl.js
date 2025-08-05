@@ -4,7 +4,7 @@ const getAllEmployees = async (req, res) => {
   const orgID = req.user.organization_id;
   try {
     const result = await pool.query(`SELECT * FROM get_all_employees(${orgID})`);
-    res.status(200).json(result.rows);
+    res.status(200).json({ data: result.rows, message: "success" });
   } catch (error) {
     console.error('Error fetching employees:', error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -172,7 +172,7 @@ const updateEmployee = async (req, res) => {
     return res.status(200).json({
       statusCode: 200,
       message: 'Employee and user updated successfully',
-      data: result.rows[0] || {} // function returns void, no rows expected
+      data: result.rows || {}// function returns void, no rows expected
     });
   } catch (error) {
     console.error('Error updating employee and user:', error);

@@ -77,8 +77,75 @@ const updateTaskStatus = async (req, res) => {
   }
 };
 
+
+const getAllEmployeesTasks = async (req, res) => {
+  const organizationId = req.user.organization_id;
+  const { status } = req.query; // Optional: 'pending' or 'completed'
+
+  try {
+    const result = await pool.query(
+      'SELECT * FROM get_all_employees_tasks($1)',
+      [organizationId]
+    );
+
+    let tasks = result.rows;
+
+    // Optional filtering by status (handled here, not in SQL)
+    if (status === 'completed') {
+      tasks = tasks.filter(task => task.completed === true);
+    } else if (status === 'pending') {
+      tasks = tasks.filter(task => task.completed === false);
+    }
+
+    // Group tasks by employee
+    const groupedTasks = {};
+    for (const task of tasks) {
+      const empId = task.employee_id;
+      if (!groupedTasks[empId]) {
+        groupedTasks[empId] = {
+          employee_id: empId,
+          name: task.name,
+          email: task.email,
+          tasks: []
+        };
+      }
+
+      // Format due_date to "August 6, 2025" style
+      const dueDate = new Date(task.due_date);
+      const options = { year: 'numeric', month: 'long', day: 'numeric' };
+      const formattedDueDate = dueDate.toLocaleDateString('en-IN', options);
+
+      groupedTasks[empId].tasks.push({
+        task_id: task.task_id,
+        title: task.title,
+        due_date: formattedDueDate,
+        completed: task.completed,
+        created_at: task.created_at,
+        updated_at: task.updated_at
+      });
+    }
+
+    const response = Object.values(groupedTasks);
+
+    res.status(200).json({
+      statusCode: 200,
+      message: 'All employees tasks fetched successfully',
+      data: response
+    });
+  } catch (error) {
+    console.error('Error fetching all employees tasks:', error);
+    res.status(500).json({
+      statusCode: 500,
+      message: 'Failed to fetch all employees tasks',
+      error: error.message
+    });
+  }
+};
+
+
 module.exports = {
   createTask,
   getMyTasks,
-  updateTaskStatus
+  updateTaskStatus,
+  getAllEmployeesTasks
 };

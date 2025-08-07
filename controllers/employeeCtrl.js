@@ -4,7 +4,7 @@ const getAllEmployees = async (req, res) => {
   const orgID = req.user.organization_id;
   try {
     const result = await pool.query(`SELECT * FROM get_all_employees(${orgID})`);
-    res.status(200).json({ data: result.rows, message: "success" });
+    res.status(200).json({ data: result.rows, message: "success", count: result.rows.length });
   } catch (error) {
     console.error('Error fetching employees:', error);
     res.status(500).json({ error: 'Internal Server Error' });

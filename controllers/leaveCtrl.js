@@ -163,6 +163,7 @@ const getPendingLeaveRequests = async (req, res) => {
     res.status(200).json({
       success: true, // ✅ Add this line
       statusCode: 200,
+      count: result.rows.length,
       message: 'Pending leave requests retrieved successfully',
       data: result.rows
     });

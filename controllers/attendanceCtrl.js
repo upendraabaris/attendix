@@ -225,6 +225,51 @@ const getAllAttendance = async (req, res) => {
   }
 };
 
+const getAttendanceByAdmin = async (req, res) => {
+  const employeeId = req.body.employeeId;
+  const { startDate, endDate } = req.query;
+
+  const today = getISTDate();
+  const start = startDate || today;
+  const end = endDate || today;
+
+  try {
+    const result = await pool.query(
+      'SELECT * FROM get_employee_attendance($1, $2, $3)',
+      [employeeId, start, end]
+    );
+
+    const formattedRows = result.rows.map((row) => {
+      const istDate = new Date(row.timestamp);
+      istDate.setMinutes(istDate.getMinutes() + 330); // Convert to IST (UTC+5:30)
+
+      return {
+        ...row,
+        date: istDate.toISOString().split('T')[0], // "YYYY-MM-DD"
+        time: istDate.toLocaleTimeString('en-IN', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        }) // "10:03 AM"
+      };
+    });
+
+    res.status(200).json({
+      statusCode: 200,
+      message: 'Attendance records retrieved successfully',
+      data: formattedRows
+    });
+
+  } catch (error) {
+    console.error('Error retrieving attendance:', error);
+    res.status(500).json({
+      statusCode: 500,
+      message: 'Failed to retrieve attendance records',
+      error: error.message
+    });
+  }
+};
+
 
 
 module.exports = {
@@ -232,5 +277,6 @@ module.exports = {
   clockOut,
   getMyAttendance,
   getEmployeeAttendance,
-  getAllAttendance
+  getAllAttendance,
+  getAttendanceByAdmin
 };

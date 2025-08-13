@@ -113,6 +113,7 @@ const getOrganizationsByPhone = async (req, res) => {
 const registerUser = async (req, res) => {
   const { name, organization_name, phone, email } = req.body;
 
+  // Basic validation
   if (!name || !organization_name || !phone || !email) {
     return res.status(400).json({ error: 'All fields are required: name, organization_name, phone, email' });
   }
@@ -137,20 +138,35 @@ const registerUser = async (req, res) => {
       organizationId = insertOrg.rows[0].id;
     }
 
-    // 2. Create Employee
-    const insertEmployee = await db.query(
-      `INSERT INTO employees (organization_id, name, email, phone, role, status)
-   VALUES ($1, $2, $3, $4, 'admin', 'active') RETURNING id`,
-      [organizationId, name, email, phone]
-    );
-    const employeeId = insertEmployee.rows[0].id;
+    // 2. Create Employee (handle duplicate email error)
+    let employeeId;
+    try {
+      const insertEmployee = await db.query(
+        `INSERT INTO employees (organization_id, name, email, phone, role, status)
+         VALUES ($1, $2, $3, $4, 'employee', 'active') RETURNING id`,
+        [organizationId, name, email, phone]
+      );
+      employeeId = insertEmployee.rows[0].id;
+    } catch (err) {
+      if (err.code === '23505') { // Unique violation
+        throw new Error('Email already exists for another user');
+      }
+      throw err;
+    }
 
-    // 3. Create User without password
-    await db.query(
-      `INSERT INTO users (employee_id, email, phone_number, login_type)
-   VALUES ($1, $2, $3, 'mobile')`,
-      [employeeId, email, phone]
-    );
+    // 3. Create User (handle duplicate email or phone error)
+    try {
+      await db.query(
+        `INSERT INTO users (employee_id, email, phone_number, login_type)
+         VALUES ($1, $2, $3, 'mobile')`,
+        [employeeId, email, phone]
+      );
+    } catch (err) {
+      if (err.code === '23505') { // Unique violation
+        throw new Error('User with this email or phone already exists');
+      }
+      throw err;
+    }
 
     await db.query('COMMIT'); // Commit transaction
 
@@ -167,11 +183,10 @@ const registerUser = async (req, res) => {
 
   } catch (error) {
     await db.query('ROLLBACK'); // Rollback on error
-    console.error('Error in user registration:', error);
-    return res.status(500).json({ error: 'Registration failed' });
+    console.error('Error in user registration:', error.message);
+    return res.status(400).json({ error: error.message }); // Send exact reason
   }
 };
-
 
 
 module.exports = { loginAdmin, loginEmployee, getOrganizationsByPhone, registerUser }

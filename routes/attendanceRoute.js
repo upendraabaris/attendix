@@ -5,7 +5,8 @@ const {
   getMyAttendance,
   getEmployeeAttendance,
   getAllAttendance,
-  getAttendanceByAdmin
+  getAttendanceByAdmin,
+  getParticularAttendance
 } = require("../controllers/attendanceCtrl");
 
 const { authenticate } = require("../middleware/authMiddleware");
@@ -35,6 +36,8 @@ router.get('/my', authenticate, getMyAttendance);
 router.get('/admin/all-employee-attendance', getAllAttendance);
 
 router.post('/admin/get-single-attendance', getAttendanceByAdmin);
+
+router.get('/admin/get-particular-attendance', authenticate, getParticularAttendance);
 
 module.exports = router;
 

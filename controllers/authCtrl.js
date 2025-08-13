@@ -10,7 +10,8 @@ const loginAdmin = async (req, res) => {
     const result = await db.query(`
       SELECT 
         u.*, 
-        e.organization_id 
+        e.organization_id,
+        e.name
       FROM users u
       JOIN employees e ON u.employee_id = e.id
       WHERE u.email = $1 AND u.login_type = $2
@@ -108,6 +109,69 @@ const getOrganizationsByPhone = async (req, res) => {
   }
 };
 
+// User Registration Controller (No Password)
+const registerUser = async (req, res) => {
+  const { name, organization_name, phone, email } = req.body;
+
+  if (!name || !organization_name || !phone || !email) {
+    return res.status(400).json({ error: 'All fields are required: name, organization_name, phone, email' });
+  }
+
+  try {
+    await db.query('BEGIN'); // Start transaction
+
+    // 1. Check if organization exists
+    const orgResult = await db.query(
+      'SELECT id FROM organizations WHERE name = $1',
+      [organization_name]
+    );
+
+    let organizationId;
+    if (orgResult.rows.length > 0) {
+      organizationId = orgResult.rows[0].id;
+    } else {
+      const insertOrg = await db.query(
+        'INSERT INTO organizations (name) VALUES ($1) RETURNING id',
+        [organization_name]
+      );
+      organizationId = insertOrg.rows[0].id;
+    }
+
+    // 2. Create Employee
+    const insertEmployee = await db.query(
+      `INSERT INTO employees (organization_id, name, email, phone, role, status)
+   VALUES ($1, $2, $3, $4, 'admin', 'active') RETURNING id`,
+      [organizationId, name, email, phone]
+    );
+    const employeeId = insertEmployee.rows[0].id;
+
+    // 3. Create User without password
+    await db.query(
+      `INSERT INTO users (employee_id, email, phone_number, login_type)
+   VALUES ($1, $2, $3, 'mobile')`,
+      [employeeId, email, phone]
+    );
+
+    await db.query('COMMIT'); // Commit transaction
+
+    return res.status(201).json({
+      statusCode: 201,
+      message: 'User registered successfully',
+      data: {
+        organization_id: organizationId,
+        employee_id: employeeId,
+        email: email,
+        phone: phone
+      }
+    });
+
+  } catch (error) {
+    await db.query('ROLLBACK'); // Rollback on error
+    console.error('Error in user registration:', error);
+    return res.status(500).json({ error: 'Registration failed' });
+  }
+};
 
 
-module.exports = { loginAdmin, loginEmployee, getOrganizationsByPhone }
+
+module.exports = { loginAdmin, loginEmployee, getOrganizationsByPhone, registerUser }

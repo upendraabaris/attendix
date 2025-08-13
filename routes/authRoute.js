@@ -1,6 +1,6 @@
 const router = require("express").Router();
 
-const { loginAdmin, loginEmployee, getOrganizationsByPhone } = require("../controllers/authCtrl");
+const { loginAdmin, loginEmployee, getOrganizationsByPhone, registerUser } = require("../controllers/authCtrl");
 
 // Admin login with email + password
 router.post('/admin-login', loginAdmin);
@@ -10,5 +10,8 @@ router.post('/employee-login', loginEmployee);
 
 // Get list of all orgaizations by phone number
 router.post('/organizations-by-phone', getOrganizationsByPhone);
+
+// New User Registration
+router.post('/register', registerUser);
 
 module.exports = router;

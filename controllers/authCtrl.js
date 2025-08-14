@@ -3,31 +3,56 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
 // Admin login with email + password
+// Admin login with mobile + OTP (OTP verification assumed done)
 const loginAdmin = async (req, res) => {
-  const { email, password } = req.body;
+  const { phone_number, organization_id } = req.body;
+
+  if (!phone_number || !organization_id) {
+    return res.status(400).json({ error: 'Phone number and organization ID are required' });
+  }
 
   try {
     const result = await db.query(`
       SELECT 
-        u.*, 
+        u.id AS user_id,
+        u.employee_id,
+        e.name AS employee_name,
+        u.email,
+        u.phone_number,
+        u.login_type,
+        u.created_at,
         e.organization_id,
-        e.name
+        e.status AS employee_status,
+        e.role AS employee_role
       FROM users u
       JOIN employees e ON u.employee_id = e.id
-      WHERE u.email = $1 AND u.login_type = $2
-    `, [email, 'email']);
+      WHERE 
+        u.phone_number = $1 
+        AND u.login_type = $2 
+        AND e.organization_id = $3
+    `, [phone_number, 'mobile', organization_id]);
 
     const user = result.rows[0];
-    if (!user) return res.status(404).json({ error: 'Admin not found' });
 
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!user) {
+      return res.status(404).json({ error: 'Admin not found' });
+    }
+
+    if (user.employee_status !== 'active') {
+      return res.status(403).json({ error: 'Admin account is inactive' });
+    }
+
+    if (user.employee_role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied: Not an admin' });
+    }
+
+    // ✅ Assuming OTP verification already done via frontend or third-party service
 
     const token = jwt.sign(
       {
-        id: user.id,
+        user_id: user.user_id,
         employee_id: user.employee_id,
-        organization_id: user.organization_id,  // ✅ include in token
+        organization_id: user.organization_id,
         role: 'admin'
       },
       process.env.JWT_SECRET,
@@ -36,10 +61,11 @@ const loginAdmin = async (req, res) => {
 
     res.json({ token, user });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Login error' });
+    console.error('Admin login error:', err);
+    res.status(500).json({ error: 'Login error', details: err.message });
   }
 };
+
 
 // Employee login with mobile (OTP will be verified separately)
 const loginEmployee = async (req, res) => {
@@ -143,7 +169,7 @@ const registerUser = async (req, res) => {
     try {
       const insertEmployee = await db.query(
         `INSERT INTO employees (organization_id, name, email, phone, role, status)
-         VALUES ($1, $2, $3, $4, 'employee', 'active') RETURNING id`,
+         VALUES ($1, $2, $3, $4, 'admin', 'active') RETURNING id`,
         [organizationId, name, email, phone]
       );
       employeeId = insertEmployee.rows[0].id;

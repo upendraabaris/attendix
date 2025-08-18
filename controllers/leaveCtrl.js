@@ -157,8 +157,9 @@ const getAllLeaveRequests = async (req, res) => {
  * Get only pending leave requests (admin only)
  */
 const getPendingLeaveRequests = async (req, res) => {
+  const orgID = req.user.organization_id;
   try {
-    const result = await pool.query('SELECT * FROM get_pending_leave_requests()');
+    const result = await pool.query(`SELECT * FROM get_pending_leave_requests(${orgID})`);
 
     res.status(200).json({
       success: true, // ✅ Add this line

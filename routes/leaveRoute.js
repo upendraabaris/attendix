@@ -46,6 +46,6 @@ router.get('/get', authenticate, getAllLeaveRequests);
 router.put('/update/:leaveId', authenticate, updateLeaveRequestStatus);
 
 
-router.get('/admin/leave-requests/pending', getPendingLeaveRequests);
+router.get('/admin/leave-requests/pending', authenticate, getPendingLeaveRequests);
 
 module.exports = router;

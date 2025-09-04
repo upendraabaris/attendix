@@ -1,6 +1,6 @@
 const router = require("express").Router();
 
-const { loginAdmin, loginEmployee, getOrganizationsByPhone, registerUser } = require("../controllers/authCtrl");
+const { loginAdmin, loginEmployee, getOrganizationsByPhone, registerUser, loginAdminDashboard } = require("../controllers/authCtrl");
 
 // Admin login with email + password
 router.post('/admin-login', loginAdmin);
@@ -13,5 +13,9 @@ router.post('/organizations-by-phone', getOrganizationsByPhone);
 
 // New User Registration
 router.post('/register', registerUser);
+
+// Admin login dashboard
+router.post('/admin-dashboard', loginAdminDashboard);
+
 
 module.exports = router;

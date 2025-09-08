@@ -33,6 +33,14 @@ app.use('/api/employee', employeesRoute);
 app.use('/api/admin', leaveRoute);  // ✅ clean base path
 app.use('/api/task', tasksRoute);
 
+app.get('/', async (req, res) => {
+  try {
+    res.send("Hello world");
+  } catch (err) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+})
+
 
 app.listen(4000, () => {
   console.log(`server is running on port: 4000`)

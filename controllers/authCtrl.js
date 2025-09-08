@@ -103,7 +103,7 @@ const loginEmployee = async (req, res) => {
     }
     // Assuming OTP verification already done via frontend/third-party API
 
-    const token = jwt.sign({ user_id: user.id, employee_id: user.employee_id, role: 'employee' }, process.env.JWT_SECRET, { expiresIn: '1d' });
+    const token = jwt.sign({ user_id: user.id, employee_id: user.employee_id, role: 'employee' }, process.env.JWT_SECRET);
     res.json({ token, user });
   } catch (err) {
     res.status(500).json({ error: 'Login error' });

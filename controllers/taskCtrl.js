@@ -1,0 +1,194 @@
+const pool = require("../configure/dbConfig");
+
+const createTask = async (req, res) => {
+  const { title, due_date } = req.body;
+  const employeeId = req.user.employee_id;
+
+  try {
+    const result = await pool.query(
+      'INSERT INTO tasks (employee_id, title, due_date) VALUES ($1, $2, $3) RETURNING *',
+      [employeeId, title, due_date]
+    );
+
+    res.status(201).json({
+      statusCode: 201,
+      message: 'Task created successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error creating task:', error);
+    res.status(500).json({ statusCode: 500, message: 'Failed to create task', error: error.message });
+  }
+};
+
+const getMyTasks = async (req, res) => {
+  const employeeId = req.user.employee_id;
+
+  try {
+    const result = await pool.query(
+      'SELECT * FROM get_tasks_by_employee($1)',
+      [employeeId]
+    );
+
+    const formattedTasks = result.rows.map(task => {
+      const dueDate = new Date(task.due_date);
+      const options = { year: 'numeric', month: 'long', day: 'numeric' };
+      const formattedDueDate = dueDate.toLocaleDateString('en-IN', options); // "July 24, 2025"
+
+      return {
+        ...task,
+        due_date: formattedDueDate
+      };
+    });
+
+    res.status(200).json({
+      statusCode: 200,
+      message: 'Tasks fetched successfully',
+      data: formattedTasks
+    });
+  } catch (error) {
+    console.error('Error fetching tasks:', error);
+    res.status(500).json({
+      statusCode: 500,
+      message: 'Failed to fetch tasks',
+      error: error.message
+    });
+  }
+};
+
+const updateTaskStatus = async (req, res) => {
+  const { taskId, is_completed } = req.body;
+  const employeeId = req.user.employee_id;
+
+  try {
+    const result = await pool.query(
+      'UPDATE tasks SET completed = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND employee_id = $3 RETURNING *',
+      [is_completed, taskId, employeeId]
+    );
+
+    res.status(200).json({
+      statusCode: 200,
+      message: 'Task status updated successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating task status:', error);
+    res.status(500).json({ statusCode: 500, message: 'Failed to update task', error: error.message });
+  }
+};
+
+
+const getAllEmployeesTasks = async (req, res) => {
+  const organizationId = req.user.organization_id;
+  const { status } = req.query; // Optional: 'pending' or 'completed'
+
+  try {
+    const result = await pool.query(
+      'SELECT * FROM get_all_employees_tasks($1)',
+      [organizationId]
+    );
+
+    let tasks = result.rows;
+
+    // ✅ Optional filtering by status
+    if (status === 'completed') {
+      tasks = tasks.filter(task => task.completed === true);
+    } else if (status === 'pending') {
+      tasks = tasks.filter(task => task.completed === false);
+    }
+
+    const groupedTasks = {};
+    for (const task of tasks) {
+      const empId = task.employee_id;
+      if (!groupedTasks[empId]) {
+        groupedTasks[empId] = {
+          employee_id: empId,
+          name: task.name,
+          email: task.email,
+          tasks: []
+        };
+      }
+
+      // ✅ Convert dates to IST
+      const dueDateObj = new Date(task.due_date);
+      const createdAtObj = new Date(task.created_at);
+      const updatedAtObj = new Date(task.updated_at);
+
+      const dateOptions = {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        timeZone: "Asia/Kolkata"
+      };
+
+      const dateTimeOptions = {
+        ...dateOptions,
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+        timeZone: "Asia/Kolkata"
+      };
+
+      groupedTasks[empId].tasks.push({
+        task_id: task.task_id,
+        title: task.title,
+        description: task.description || null,
+        due_date: dueDateObj.toLocaleDateString("en-IN", dateOptions), // ✅ Only Date
+        completed: task.completed,
+        created_at: createdAtObj.toLocaleString("en-IN", dateTimeOptions), // ✅ Date + Time in IST
+        updated_at: updatedAtObj.toLocaleString("en-IN", dateTimeOptions)  // ✅ Date + Time in IST
+      });
+    }
+
+    const response = Object.values(groupedTasks);
+
+    res.status(200).json({
+      statusCode: 200,
+      message: "All employees tasks fetched successfully",
+      data: response
+    });
+  } catch (error) {
+    console.error("Error fetching all employees tasks:", error);
+    res.status(500).json({
+      statusCode: 500,
+      message: "Failed to fetch all employees tasks",
+      error: error.message
+    });
+  }
+};
+
+
+// ✅ Admin assigns task to any employee
+const assignTask = async (req, res) => {
+  const { employee_id, title, due_date, description } = req.body;
+
+  try {
+    // Task insert kare
+    const result = await pool.query(
+      `INSERT INTO tasks(employee_id, title, due_date, description) VALUES($1, $2, $3, $4) RETURNING *`,
+      [employee_id, title, due_date, description]
+    );
+
+    res.status(201).json({
+      statusCode: 201,
+      message: 'Task assigned successfully by admin',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error assigning task:', error);
+    res.status(500).json({
+      statusCode: 500,
+      message: 'Failed to assign task',
+      error: error.message
+    });
+  }
+};
+
+module.exports = {
+  createTask,
+  getMyTasks,
+  updateTaskStatus,
+  getAllEmployeesTasks,
+  assignTask
+};

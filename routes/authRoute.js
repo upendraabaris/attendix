@@ -1,21 +1,35 @@
 const router = require("express").Router();
+const { authenticate } = require("../middleware/authMiddleware");
 
-const { loginAdmin, loginEmployee, getOrganizationsByPhone, registerUser, loginAdminDashboard } = require("../controllers/authCtrl");
+const { 
+  loginAdmin, 
+  loginEmployee, 
+  getOrganizationsByPhone, 
+  registerUser, 
+  loginAdminDashboard,
+  changePassword
+} = require("../controllers/authCtrl");
 
-// Admin login with email + password
+// ================================
+// Auth Routes
+// ================================
+
+// Admin login with phone + org_id
 router.post('/admin-login', loginAdmin);
 
-// Employee login with mobile (OTP)
+// Employee login with mobile (OTP verified separately)
 router.post('/employee-login', loginEmployee);
 
-// Get list of all orgaizations by phone number
+// Get list of organizations by phone number
 router.post('/organizations-by-phone', getOrganizationsByPhone);
 
 // New User Registration
 router.post('/register', registerUser);
 
-// Admin login dashboard
+// Admin login dashboard (email + password)
 router.post('/admin-dashboard', loginAdminDashboard);
 
+// Change password (authenticated user only)
+router.post('/change-password', authenticate, changePassword);
 
 module.exports = router;

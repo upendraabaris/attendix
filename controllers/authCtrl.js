@@ -1,11 +1,13 @@
-const db = require('../configure/dbConfig'); // or your database connection file
+const db = require('../configure/dbConfig'); // Database connection
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 require("dotenv").config();
+
 console.log("JWT_SECRET in login:", process.env.JWT_SECRET);
 
-// Admin login with email + password
-// Admin login with mobile + OTP (OTP verification assumed done)
+// ================================
+// Admin login with phone + org_id
+// ================================
 const loginAdmin = async (req, res) => {
   const { phone_number, organization_id } = req.body;
 
@@ -36,20 +38,11 @@ const loginAdmin = async (req, res) => {
 
     const user = result.rows[0];
 
-    if (!user) {
-      return res.status(404).json({ error: 'Admin not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'Admin not found' });
+    if (user.employee_status !== 'active') return res.status(403).json({ error: 'Admin account is inactive' });
+    if (user.employee_role !== 'admin') return res.status(403).json({ error: 'Access denied: Not an admin' });
 
-    if (user.employee_status !== 'active') {
-      return res.status(403).json({ error: 'Admin account is inactive' });
-    }
-
-    if (user.employee_role !== 'admin') {
-      return res.status(403).json({ error: 'Access denied: Not an admin' });
-    }
-
-    // ✅ Assuming OTP verification already done via frontend or third-party service
-
+    // ✅ Generate JWT
     const token = jwt.sign(
       {
         user_id: user.user_id,
@@ -68,57 +61,55 @@ const loginAdmin = async (req, res) => {
   }
 };
 
-
-// Employee login with mobile (OTP will be verified separately)
+// ================================
+// Employee login with mobile
+// ================================
 const loginEmployee = async (req, res) => {
   const { phone_number, organization_id } = req.body;
   try {
     const result = await db.query(
       `
       SELECT 
-  u.id AS user_id,
-  u.employee_id,
-  e.name AS employee_name,
-  u.email,
-  u.phone_number,
-  u.login_type,
-  u.created_at,
-  e.organization_id,
-      e.status AS employee_status
+        u.id AS user_id,
+        u.employee_id,
+        e.name AS employee_name,
+        u.email,
+        u.phone_number,
+        u.login_type,
+        u.created_at,
+        e.organization_id,
+        e.status AS employee_status
       FROM users u
       JOIN employees e ON u.employee_id = e.id
       WHERE 
         u.phone_number = $1 
         AND u.login_type = $2 
         AND e.organization_id = $3
-        
+      `, 
+      [phone_number, 'mobile', organization_id]
+    );
 
-      `, [phone_number, 'mobile', organization_id]);
     const user = result.rows[0];
+    if (!user) return res.status(404).json({ error: 'Employee not found' });
+    if (user.employee_status !== 'active') return res.status(403).json({ error: 'Employee account is inactive' });
 
-    if (!user) {
-      return res.status(404).json({ error: 'Employee not found' });
-    }
-
-    if (user.employee_status !== 'active') {
-      return res.status(403).json({ error: 'Employee account is inactive' });
-    }
-    // Assuming OTP verification already done via frontend/third-party API
-
-    const token = jwt.sign({ user_id: user.id, employee_id: user.employee_id, role: 'employee' }, process.env.JWT_SECRET);
+    // ✅ Generate JWT
+    const token = jwt.sign(
+      { user_id: user.user_id, employee_id: user.employee_id, role: 'employee' },
+      process.env.JWT_SECRET
+    );
     res.json({ token, user });
   } catch (err) {
     res.status(500).json({ error: 'Login error' });
   }
 };
 
-//Get all orgaizations list by phone number
+// ================================
+// Get organizations by phone
+// ================================
 const getOrganizationsByPhone = async (req, res) => {
   const { phone_number } = req.body;
-
-  if (!phone_number) {
-    return res.status(400).json({ error: 'Phone number is required' });
-  }
+  if (!phone_number) return res.status(400).json({ error: 'Phone number is required' });
 
   try {
     const result = await db.query(
@@ -137,11 +128,11 @@ const getOrganizationsByPhone = async (req, res) => {
   }
 };
 
-// User Registration Controller (No Password)
+// ================================
+// User Registration (No Password)
+// ================================
 const registerUser = async (req, res) => {
   const { name, organization_name, phone, email } = req.body;
-
-  // Basic validation
   if (!name || !organization_name || !phone || !email) {
     return res.status(400).json({ error: 'All fields are required: name, organization_name, phone, email' });
   }
@@ -149,7 +140,7 @@ const registerUser = async (req, res) => {
   try {
     await db.query('BEGIN'); // Start transaction
 
-    // 1. Check if organization exists
+    // 1. Check or insert organization
     const orgResult = await db.query(
       'SELECT id FROM organizations WHERE name = $1',
       [organization_name]
@@ -166,7 +157,7 @@ const registerUser = async (req, res) => {
       organizationId = insertOrg.rows[0].id;
     }
 
-    // 2. Create Employee (handle duplicate email error)
+    // 2. Insert Employee
     let employeeId;
     try {
       const insertEmployee = await db.query(
@@ -176,13 +167,11 @@ const registerUser = async (req, res) => {
       );
       employeeId = insertEmployee.rows[0].id;
     } catch (err) {
-      if (err.code === '23505') { // Unique violation
-        throw new Error('Email already exists for another user');
-      }
+      if (err.code === '23505') throw new Error('Email already exists for another user');
       throw err;
     }
 
-    // 3. Create User (handle duplicate email or phone error)
+    // 3. Insert User
     try {
       await db.query(
         `INSERT INTO users (employee_id, email, phone_number, login_type)
@@ -190,9 +179,7 @@ const registerUser = async (req, res) => {
         [employeeId, email, phone]
       );
     } catch (err) {
-      if (err.code === '23505') { // Unique violation
-        throw new Error('User with this email or phone already exists');
-      }
+      if (err.code === '23505') throw new Error('User with this email or phone already exists');
       throw err;
     }
 
@@ -212,17 +199,16 @@ const registerUser = async (req, res) => {
   } catch (error) {
     await db.query('ROLLBACK'); // Rollback on error
     console.error('Error in user registration:', error.message);
-    return res.status(400).json({ error: error.message }); // Send exact reason
+    return res.status(400).json({ error: error.message });
   }
 };
 
-// ✅ Admin Login with Email + Password
+// ================================
+// Admin Login (Email + Password)
+// ================================
 const loginAdminDashboard = async (req, res) => {
   const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
-  }
+  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
   try {
     const result = await db.query(`
@@ -231,7 +217,7 @@ const loginAdminDashboard = async (req, res) => {
         u.employee_id,
         e.name AS employee_name,
         u.email,
-        u.password_hash, -- stored hash
+        u.password_hash,
         u.login_type,
         u.created_at,
         e.organization_id,
@@ -243,26 +229,13 @@ const loginAdminDashboard = async (req, res) => {
     `, [email]);
 
     const user = result.rows[0];
+    if (!user) return res.status(404).json({ error: 'Admin not found' });
+    if (user.employee_status !== 'active') return res.status(403).json({ error: 'Admin account is inactive' });
+    if (user.employee_role !== 'admin') return res.status(403).json({ error: 'Access denied: Not an admin' });
 
-    if (!user) {
-      return res.status(404).json({ error: 'Admin not found' });
-    }
-
-    if (user.employee_status !== 'active') {
-      return res.status(403).json({ error: 'Admin account is inactive' });
-    }
-
-    if (user.employee_role !== 'admin') {
-      return res.status(403).json({ error: 'Access denied: Not an admin' });
-    }
-
-    // ✅ Compare password hash
     const isMatch = await bcrypt.compare(password, user.password_hash);
-    if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
+    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
 
-    // ✅ Generate JWT
     const token = jwt.sign(
       {
         user_id: user.user_id,
@@ -274,9 +247,7 @@ const loginAdminDashboard = async (req, res) => {
       { expiresIn: '1d' }
     );
 
-    // remove password before sending user object
-    delete user.password;
-
+    delete user.password_hash;
     res.json({ token, user });
   } catch (err) {
     console.error('Admin email login error:', err);
@@ -284,5 +255,51 @@ const loginAdminDashboard = async (req, res) => {
   }
 };
 
+// ================================
+// Change Password (Authenticated)
+// ================================
+const changePassword = async (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+  if (!oldPassword || !newPassword) {
+    return res.status(400).json({ error: 'Old password and new password are required' });
+  }
 
-module.exports = { loginAdmin, loginEmployee, getOrganizationsByPhone, registerUser, loginAdminDashboard }
+  try {
+    const userId = req.user.user_id; // from middleware
+
+    const result = await db.query(
+      `SELECT id, password_hash FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    const user = result.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const isMatch = await bcrypt.compare(oldPassword, user.password_hash);
+    if (!isMatch) return res.status(400).json({ error: 'Old password is incorrect' });
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await db.query(
+      `UPDATE users SET password_hash = $1 WHERE id = $2`,
+      [hashedPassword, userId]
+    );
+
+    res.status(200).json({ message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Change password error:', error.message);
+    res.status(500).json({ error: 'Server error', details: error.message });
+  }
+};
+
+// ================================
+// Exports
+// ================================
+module.exports = { 
+  loginAdmin, 
+  loginEmployee, 
+  getOrganizationsByPhone, 
+  registerUser, 
+  loginAdminDashboard,
+  changePassword
+};

@@ -282,5 +282,48 @@ const loginAdminDashboard = async (req, res) => {
   }
 };
 
+// Change Password (Authenticated)
+// ================================
+const changePassword = async (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+  if (!oldPassword || !newPassword) {
+    return res.status(400).json({ error: 'Old password and new password are required' });
+  }
 
-module.exports = { loginAdmin, loginEmployee, getOrganizationsByPhone, registerUser, loginAdminDashboard }
+  try {
+    const userId = req.user.user_id; // from middleware
+
+    const result = await db.query(
+      `SELECT id, password_hash FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    const user = result.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const isMatch = await bcrypt.compare(oldPassword, user.password_hash);
+    if (!isMatch) return res.status(400).json({ error: 'Old password is incorrect' });
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await db.query(
+      `UPDATE users SET password_hash = $1 WHERE id = $2`,
+      [hashedPassword, userId]
+    );
+
+    res.status(200).json({ message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Change password error:', error.message);
+    res.status(500).json({ error: 'Server error', details: error.message });
+  }
+};
+
+
+module.exports = {
+  loginAdmin,
+  loginEmployee,
+  getOrganizationsByPhone,
+  registerUser,
+  loginAdminDashboard,
+  changePassword
+};

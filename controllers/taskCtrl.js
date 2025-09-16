@@ -118,6 +118,7 @@ const getAllEmployeesTasks = async (req, res) => {
       groupedTasks[empId].tasks.push({
         task_id: task.task_id,
         title: task.title,
+        description: task.description,
         due_date: formattedDueDate,
         completed: task.completed,
         created_at: task.created_at,
@@ -141,11 +142,38 @@ const getAllEmployeesTasks = async (req, res) => {
     });
   }
 };
+// ✅ Admin assigns task to any employee
+const assignTask = async (req, res) => {
+  const { employee_id, title, due_date, description } = req.body;
+
+  try {
+    // Task insert kare
+    const result = await pool.query(
+      `INSERT INTO tasks(employee_id, title, due_date, description) VALUES($1, $2, $3, $4) RETURNING *`,
+      [employee_id, title, due_date, description]
+    );
+
+    res.status(201).json({
+      statusCode: 201,
+      message: 'Task assigned successfully by admin',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error assigning task:', error);
+    res.status(500).json({
+      statusCode: 500,
+      message: 'Failed to assign task',
+      error: error.message
+    });
+  }
+};
+
 
 
 module.exports = {
   createTask,
   getMyTasks,
   updateTaskStatus,
-  getAllEmployeesTasks
+  getAllEmployeesTasks,
+  assignTask
 };

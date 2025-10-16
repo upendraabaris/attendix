@@ -84,7 +84,7 @@ const getAllEmployeesTasks = async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT * FROM get_all_employees_tasks($1)',
+      'SELECT * FROM get_all_employees_tasks_v2($1)',
       [organizationId]
     );
 
@@ -122,7 +122,10 @@ const getAllEmployeesTasks = async (req, res) => {
         due_date: formattedDueDate,
         completed: task.completed,
         created_at: task.created_at,
-        updated_at: task.updated_at
+        updated_at: task.updated_at,
+        attachment : task.attachment,
+        workspace_id : task.workspace_id,
+        workspace_name : task.workspace_name
       });
     }
 
@@ -144,13 +147,15 @@ const getAllEmployeesTasks = async (req, res) => {
 };
 // ✅ Admin assigns task to any employee
 const assignTask = async (req, res) => {
-  const { employee_id, title, due_date, description } = req.body;
+  const { employee_id, title, due_date, description, attachment, workspace_id ,workspace_name } = req.body;
 
   try {
     // Task insert kare
     const result = await pool.query(
-      `INSERT INTO tasks(employee_id, title, due_date, description) VALUES($1, $2, $3, $4) RETURNING *`,
-      [employee_id, title, due_date, description]
+      // `INSERT INTO tasks(employee_id, title, due_date, description) VALUES($1, $2, $3, $4) RETURNING *`,
+      `INSERT INTO tasks(employee_id, title, due_date, description, attachment, workspace_id, workspace_name)
+   VALUES($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [employee_id, title, due_date, description, attachment, workspace_id ,workspace_name]
     );
 
     res.status(201).json({

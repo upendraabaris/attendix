@@ -56,26 +56,81 @@ const getMyTasks = async (req, res) => {
   }
 };
 
+// const updateTaskStatus = async (req, res) => {
+//   const { taskId, is_completed } = req.body;
+//   const employeeId = req.user.employee_id;
+
+//   try {
+//     const result = await pool.query(
+//       'UPDATE tasks SET completed = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND employee_id = $3 RETURNING *',
+//       [is_completed, taskId, employeeId]
+//     );
+
+//     res.status(200).json({
+//       statusCode: 200,
+//       message: 'Task status updated successfully',
+//       data: result.rows[0]
+//     });
+//   } catch (error) {
+//     console.error('Error updating task status:', error);
+//     res.status(500).json({ statusCode: 500, message: 'Failed to update task', error: error.message });
+//   }
+// };
+
 const updateTaskStatus = async (req, res) => {
-  const { taskId, is_completed } = req.body;
+  const { taskId, is_completed, status } = req.body;
   const employeeId = req.user.employee_id;
+  const role = req.user.role; // ✅ 'admin' or 'employee'
 
   try {
-    const result = await pool.query(
-      'UPDATE tasks SET completed = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND employee_id = $3 RETURNING *',
-      [is_completed, taskId, employeeId]
-    );
+    let result;
+
+    if (role === 'admin') {
+      // ✅ Admin can update *any* task
+      result = await pool.query(
+        `UPDATE tasks 
+         SET completed = $1, status = $2, updated_at = CURRENT_TIMESTAMP 
+         WHERE id = $3 
+         RETURNING *`,
+        [is_completed, status, taskId]
+      );
+    } else {
+      // ✅ Employee can update *only their own* task
+      result = await pool.query(
+        `UPDATE tasks 
+         SET completed = $1, status = $2, updated_at = CURRENT_TIMESTAMP 
+         WHERE id = $3 AND employee_id = $4 
+         RETURNING *`,
+        [is_completed, status, taskId, employeeId]
+      );
+    }
+
+    if (result.rowCount === 0) {
+      return res.status(403).json({
+        statusCode: 403,
+        message:
+          role === 'admin'
+            ? 'Task not found'
+            : 'You are not authorized to update this task',
+      });
+    }
 
     res.status(200).json({
       statusCode: 200,
       message: 'Task status updated successfully',
-      data: result.rows[0]
+      data: result.rows[0],
     });
   } catch (error) {
     console.error('Error updating task status:', error);
-    res.status(500).json({ statusCode: 500, message: 'Failed to update task', error: error.message });
+    res.status(500).json({
+      statusCode: 500,
+      message: 'Failed to update task',
+      error: error.message,
+    });
   }
 };
+
+
 
 
 const getAllEmployeesTasks = async (req, res) => {
@@ -125,7 +180,8 @@ const getAllEmployeesTasks = async (req, res) => {
         updated_at: task.updated_at,
         attachment : task.attachment,
         workspace_id : task.workspace_id,
-        workspace_name : task.workspace_name
+        workspace_name : task.workspace_name,
+        status: task.status,
       });
     }
 
@@ -145,6 +201,8 @@ const getAllEmployeesTasks = async (req, res) => {
     });
   }
 };
+
+
 // ✅ Admin assigns task to any employee
 const assignTask = async (req, res) => {
   const { employee_id, title, due_date, description, attachment, workspace_id ,workspace_name } = req.body;
@@ -172,8 +230,6 @@ const assignTask = async (req, res) => {
     });
   }
 };
-
-
 
 module.exports = {
   createTask,

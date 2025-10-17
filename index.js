@@ -23,6 +23,7 @@ const leaveRoute = require("./routes/leaveRoute");
 const authRoutes = require('./routes/authRoute');
 const employeesRoute = require('./routes/employeesRoute');
 const tasksRoute = require('./routes/tasksRoute')
+const workspaceRoute = require("./routes/workspaceRoute");
 
 
 
@@ -32,6 +33,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/employee', employeesRoute);
 app.use('/api/admin', leaveRoute);  // ✅ clean base path
 app.use('/api/task', tasksRoute);
+app.use("/api/workspaces", workspaceRoute);
 
 app.get('/', async (req, res) => {
   try {

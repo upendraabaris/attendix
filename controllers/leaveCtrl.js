@@ -1,5 +1,5 @@
 const pool = require("../configure/dbConfig");
-const { sendNewLeaveRequestEmail } = require("../services/emailService");
+const { sendNewLeaveRequestEmail, sendLeaveStatusEmail } = require("../services/emailService");
 
 const createLeaveRequest = async (req, res) => {
   const { type, startDate, endDate, reason } = req.body;
@@ -252,6 +252,41 @@ const updateLeaveRequestStatus = async (req, res) => {
         statusCode: 404,
         message: 'Leave request not found or not updated',
       });
+    }
+
+    // Send email notification to the employee (non-blocking)
+    try {
+      const leaveData = result.rows[0];
+      const employeeId = leaveData.employee_id;
+      
+      // Fetch employee details for email
+      const employeeResult = await pool.query(
+        'SELECT name, email FROM employees WHERE id = $1',
+        [employeeId]
+      );
+      
+      if (employeeResult.rows.length > 0) {
+        const employee = employeeResult.rows[0];
+        const organizationName = process.env.ORG_NAME || 'Attendix';
+        
+        await sendLeaveStatusEmail({
+          employeeEmail: employee.email,
+          employeeName: employee.name,
+          organizationName,
+          leave: {
+            type: leaveData.type,
+            startDate: leaveData.start_date,
+            endDate: leaveData.end_date,
+            reason: leaveData.reason
+          },
+          status
+        });
+        
+        console.log(`Leave ${status} email sent to ${employee.email}`);
+      }
+    } catch (emailError) {
+      console.error('Failed to send leave status email:', emailError.message);
+      // Don't fail the API response if email fails
     }
 
     return res.status(200).json({

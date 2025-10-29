@@ -130,9 +130,7 @@ const updateTaskStatus = async (req, res) => {
   }
 };
 
-
-
-
+// ✅ Admin fetches all employees' tasks, grouped by employee till 288
 const getAllEmployeesTasks = async (req, res) => {
   const organizationId = req.user.organization_id;
   const { status } = req.query; // Optional: 'pending' or 'completed'
@@ -236,5 +234,6 @@ module.exports = {
   getMyTasks,
   updateTaskStatus,
   getAllEmployeesTasks,
-  assignTask
+  assignTask,
+  // getEmployeesWorkspaces // Added this export
 };

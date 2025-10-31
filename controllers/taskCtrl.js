@@ -57,36 +57,67 @@ const getMyTasks = async (req, res) => {
 };
 
 // const updateTaskStatus = async (req, res) => {
-//   const { taskId, is_completed } = req.body;
+//   const { taskId, is_completed, status } = req.body;
 //   const employeeId = req.user.employee_id;
+//   const role = req.user.role; // ✅ 'admin' or 'employee'
 
 //   try {
-//     const result = await pool.query(
-//       'UPDATE tasks SET completed = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND employee_id = $3 RETURNING *',
-//       [is_completed, taskId, employeeId]
-//     );
+//     let result;
 
+//     if (role === 'admin') {
+//       // ✅ Admin can update *any* task
+//       result = await pool.query(
+//         `UPDATE tasks 
+//          SET completed = $1, status = $2, updated_at = CURRENT_TIMESTAMP 
+//          WHERE id = $3 
+//          RETURNING *`,
+//         [is_completed, status, taskId]
+//       );
+//     } else {
+//       // ✅ Employee can update *only their own* task
+//       result = await pool.query(
+//         `UPDATE tasks 
+//          SET completed = $1, status = $2, updated_at = CURRENT_TIMESTAMP 
+//          WHERE id = $3 AND employee_id = $4 
+//          RETURNING *`,
+//         [is_completed, status, taskId, employeeId]
+//       );
+//     }
+
+//     if (result.rowCount === 0) {
+//       return res.status(403).json({
+//         statusCode: 403,
+//         message:
+//           role === 'admin'
+//             ? 'Task not found'
+//             : 'You are not authorized to update this task',
+//       });
+//     }
+    
 //     res.status(200).json({
 //       statusCode: 200,
 //       message: 'Task status updated successfully',
-//       data: result.rows[0]
+//       data: result.rows[0],
 //     });
 //   } catch (error) {
 //     console.error('Error updating task status:', error);
-//     res.status(500).json({ statusCode: 500, message: 'Failed to update task', error: error.message });
+//     res.status(500).json({
+//       statusCode: 500,
+//       message: 'Failed to update task',
+//       error: error.message,
+//     });
 //   }
 // };
 
 const updateTaskStatus = async (req, res) => {
   const { taskId, is_completed, status } = req.body;
   const employeeId = req.user.employee_id;
-  const role = req.user.role; // ✅ 'admin' or 'employee'
+  const role = req.user.role;
 
   try {
     let result;
 
-    if (role === 'admin') {
-      // ✅ Admin can update *any* task
+    if (role === "admin") {
       result = await pool.query(
         `UPDATE tasks 
          SET completed = $1, status = $2, updated_at = CURRENT_TIMESTAMP 
@@ -95,7 +126,6 @@ const updateTaskStatus = async (req, res) => {
         [is_completed, status, taskId]
       );
     } else {
-      // ✅ Employee can update *only their own* task
       result = await pool.query(
         `UPDATE tasks 
          SET completed = $1, status = $2, updated_at = CURRENT_TIMESTAMP 
@@ -109,26 +139,33 @@ const updateTaskStatus = async (req, res) => {
       return res.status(403).json({
         statusCode: 403,
         message:
-          role === 'admin'
-            ? 'Task not found'
-            : 'You are not authorized to update this task',
+          role === "admin"
+            ? "Task not found"
+            : "You are not authorized to update this task",
       });
     }
 
+    const updatedTask = result.rows[0];
+
+    // ✅ Emit event to all connected clients
+    const io = req.app.get("io");
+    io.emit("taskUpdated", updatedTask);
+
     res.status(200).json({
       statusCode: 200,
-      message: 'Task status updated successfully',
-      data: result.rows[0],
+      message: "Task status updated successfully",
+      data: updatedTask,
     });
   } catch (error) {
-    console.error('Error updating task status:', error);
+    console.error("Error updating task status:", error);
     res.status(500).json({
       statusCode: 500,
-      message: 'Failed to update task',
+      message: "Failed to update task",
       error: error.message,
     });
   }
 };
+
 
 // ✅ Admin fetches all employees' tasks, grouped by employee till 288
 const getAllEmployeesTasks = async (req, res) => {

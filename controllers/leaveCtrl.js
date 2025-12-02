@@ -123,6 +123,10 @@ const getMyLeaveRequests = async (req, res) => {
         month: 'long',
         day: 'numeric',
       }),
+      // ⭐ NEW: Include time for hourly leave
+      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
+      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
+
     }));
 
 
@@ -155,10 +159,16 @@ const getEmployeeLeaveRequests = async (req, res) => {
       [employeeId]
     );
 
+    const formattedRows = result.rows.map(row => ({
+      ...row,
+      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
+      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
+    }));
+
     res.status(200).json({
       statusCode: 200,
       message: 'Leave requests retrieved successfully',
-      data: result.rows
+      data: formattedRows
     });
   } catch (error) {
     console.error('Error retrieving leave requests:', error);
@@ -196,7 +206,10 @@ const getAllLeaveRequests = async (req, res) => {
         year: 'numeric',
         month: 'short',
         day: 'numeric'
-      })
+      }),
+      // ⭐ NEW
+      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
+      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
     }));
     console.log('Formatted Result:', formattedDate);
 
@@ -224,12 +237,19 @@ const getPendingLeaveRequests = async (req, res) => {
   try {
     const result = await pool.query(`SELECT * FROM get_pending_leave_requests(${orgID})`);
 
+
+    const formattedRows = result.rows.map(row => ({
+      ...row,
+      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
+      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
+    }));
+
     res.status(200).json({
       success: true, // ✅ Add this line
       statusCode: 200,
       count: result.rows.length,
       message: 'Pending leave requests retrieved successfully',
-      data: result.rows
+      data: formattedRows
     });
   } catch (error) {
     console.error('Error retrieving pending leave requests:', error);
@@ -285,17 +305,17 @@ const updateLeaveRequestStatus = async (req, res) => {
     try {
       const leaveData = result.rows[0];
       const employeeId = leaveData.employee_id;
-      
+
       // Fetch employee details for email
       const employeeResult = await pool.query(
         'SELECT name, email FROM employees WHERE id = $1',
         [employeeId]
       );
-      
+
       if (employeeResult.rows.length > 0) {
         const employee = employeeResult.rows[0];
         const organizationName = process.env.ORG_NAME || 'Attendix';
-        
+
         await sendLeaveStatusEmail({
           employeeEmail: employee.email,
           employeeName: employee.name,
@@ -308,7 +328,7 @@ const updateLeaveRequestStatus = async (req, res) => {
           },
           status
         });
-        
+
         console.log(`Leave ${status} email sent to ${employee.email}`);
       }
     } catch (emailError) {

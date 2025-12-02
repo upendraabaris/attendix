@@ -1,4 +1,5 @@
 const pool = require("../configure/dbConfig");
+const { sendNewLeaveRequestEmail, sendLeaveStatusEmail } = require("../services/emailService");
 
 const createLeaveRequest = async (req, res) => {
   const { type, startDate, endDate, reason, duration_type, startTime, endTime } = req.body;
@@ -44,6 +45,41 @@ const createLeaveRequest = async (req, res) => {
         endTime || null   // p_end_time
       ]
     );
+
+    // Attempt to email the admin about the new leave request (non-blocking of API success)
+    try {
+      const adminEmail = process.env.ADMIN_EMAIL;
+      const organizationName = process.env.ORG_NAME || 'Attendix';
+      // Prefer real employee name from DB to avoid sending the numeric ID
+      let employeeName = null;
+      try {
+        const empRes = await pool.query('SELECT name FROM employees WHERE id = $1', [employeeId]);
+        if (empRes.rows && empRes.rows[0] && empRes.rows[0].name) {
+          employeeName = empRes.rows[0].name;
+        }
+      } catch (nameErr) {
+        // fallback handled below
+      }
+      if (!employeeName) {
+        employeeName = (req.user && (req.user.name || req.user.employee_name || req.user.fullName))
+          ? (req.user.name || req.user.employee_name || req.user.fullName)
+          : `Employee #${employeeId}`;
+      }
+
+      await sendNewLeaveRequestEmail({
+        adminEmail,
+        organizationName,
+        employeeName,
+        leave: {
+          type,
+          startDate,
+          endDate,
+          reason
+        }
+      });
+    } catch (emailError) {
+      console.error('Failed to send new leave request email:', emailError.message);
+    }
 
     res.status(201).json({
       statusCode: 201,
@@ -243,6 +279,41 @@ const updateLeaveRequestStatus = async (req, res) => {
         statusCode: 404,
         message: 'Leave request not found or not updated',
       });
+    }
+
+    // Send email notification to the employee (non-blocking)
+    try {
+      const leaveData = result.rows[0];
+      const employeeId = leaveData.employee_id;
+      
+      // Fetch employee details for email
+      const employeeResult = await pool.query(
+        'SELECT name, email FROM employees WHERE id = $1',
+        [employeeId]
+      );
+      
+      if (employeeResult.rows.length > 0) {
+        const employee = employeeResult.rows[0];
+        const organizationName = process.env.ORG_NAME || 'Attendix';
+        
+        await sendLeaveStatusEmail({
+          employeeEmail: employee.email,
+          employeeName: employee.name,
+          organizationName,
+          leave: {
+            type: leaveData.type,
+            startDate: leaveData.start_date,
+            endDate: leaveData.end_date,
+            reason: leaveData.reason
+          },
+          status
+        });
+        
+        console.log(`Leave ${status} email sent to ${employee.email}`);
+      }
+    } catch (emailError) {
+      console.error('Failed to send leave status email:', emailError.message);
+      // Don't fail the API response if email fails
     }
 
     return res.status(200).json({

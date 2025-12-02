@@ -1,11 +1,11 @@
 const pool = require("../configure/dbConfig");
 
 const createLeaveRequest = async (req, res) => {
-  const { type, startDate, endDate, reason } = req.body;
+  const { type, startDate, endDate, reason, duration_type, startTime, endTime } = req.body;
   const employeeId = req.user.employee_id;
 
   try {
-    // Validate input
+    // Basic validation
     if (!type || !startDate || !endDate) {
       return res.status(400).json({
         statusCode: 400,
@@ -13,10 +13,36 @@ const createLeaveRequest = async (req, res) => {
       });
     }
 
-    // Call the PostgreSQL function to create leave request
+    const dur = duration_type || 'full_day';
+
+    if (dur === 'hourly') {
+      if (!startTime || !endTime) {
+        return res.status(400).json({
+          statusCode: 400,
+          message: 'Start time and end time are required for hourly leave'
+        });
+      }
+      // optional: enforce same date on client; server function also checks it
+      if (new Date(startDate).toDateString() !== new Date(endDate).toDateString()) {
+        return res.status(400).json({
+          statusCode: 400,
+          message: 'Hourly leave must start and end on the same date'
+        });
+      }
+    }
+
     const result = await pool.query(
-      'SELECT * FROM create_leave_request($1, $2, $3, $4, $5)',
-      [employeeId, type, startDate, endDate, reason]
+      'SELECT * FROM create_leave_request($1, $2, $3, $4, $5, $6, $7, $8)',
+      [
+        employeeId,
+        type,
+        startDate,
+        endDate,
+        reason,
+        dur,              // p_duration_type
+        startTime || null, // p_start_time (string like '14:30:00' or null)
+        endTime || null   // p_end_time
+      ]
     );
 
     res.status(201).json({
@@ -33,6 +59,7 @@ const createLeaveRequest = async (req, res) => {
     });
   }
 };
+
 
 /**
  * Get leave requests for the logged-in employee

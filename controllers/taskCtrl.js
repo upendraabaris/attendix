@@ -93,7 +93,7 @@ const getMyTasks = async (req, res) => {
 //             : 'You are not authorized to update this task',
 //       });
 //     }
-    
+
 //     res.status(200).json({
 //       statusCode: 200,
 //       message: 'Task status updated successfully',
@@ -200,10 +200,18 @@ const getAllEmployeesTasks = async (req, res) => {
         };
       }
 
-      // Format due_date to "August 6, 2025" style
-      const dueDate = new Date(task.due_date);
-      const options = { year: 'numeric', month: 'long', day: 'numeric' };
-      const formattedDueDate = dueDate.toLocaleDateString('en-IN', options);
+      // ❌ Skip dummy rows (employee with no tasks)
+      if (!task.task_id) {
+        continue;
+      }
+
+      // ✅ Safe date formatting
+      let formattedDueDate = null;
+      if (task.due_date) {
+        const dueDate = new Date(task.due_date);
+        const options = { year: 'numeric', month: 'long', day: 'numeric' };
+        formattedDueDate = dueDate.toLocaleDateString('en-IN', options);
+      }
 
       groupedTasks[empId].tasks.push({
         task_id: task.task_id,
@@ -213,14 +221,16 @@ const getAllEmployeesTasks = async (req, res) => {
         completed: task.completed,
         created_at: task.created_at,
         updated_at: task.updated_at,
-        attachment : task.attachment,
-        workspace_id : task.workspace_id,
-        workspace_name : task.workspace_name,
+        attachment: task.attachment,
+        workspace_id: task.workspace_id,
+        workspace_name: task.workspace_name,
         status: task.status,
       });
+
     }
 
-    const response = Object.values(groupedTasks);
+    const response = Object.values(groupedTasks)
+      .filter(emp => emp.tasks.length > 0);
 
     res.status(200).json({
       statusCode: 200,
@@ -240,7 +250,7 @@ const getAllEmployeesTasks = async (req, res) => {
 
 // ✅ Admin assigns task to any employee
 const assignTask = async (req, res) => {
-  const { employee_id, title, due_date, description, attachment, workspace_id ,workspace_name } = req.body;
+  const { employee_id, title, due_date, description, attachment, workspace_id, workspace_name } = req.body;
 
   try {
     // Task insert kare
@@ -248,7 +258,7 @@ const assignTask = async (req, res) => {
       // `INSERT INTO tasks(employee_id, title, due_date, description) VALUES($1, $2, $3, $4) RETURNING *`,
       `INSERT INTO tasks(employee_id, title, due_date, description, attachment, workspace_id, workspace_name)
    VALUES($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [employee_id, title, due_date, description, attachment, workspace_id ,workspace_name]
+      [employee_id, title, due_date, description, attachment, workspace_id, workspace_name]
     );
 
     res.status(201).json({

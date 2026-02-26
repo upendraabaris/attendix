@@ -125,9 +125,50 @@ async function sendLeaveStatusEmail({ employeeEmail, employeeName, organizationN
   return sendMail({ from, ...mail });
 }
 
+function buildEmployeeCredentialsEmail({ employeeEmail, employeeName, organizationName, password }) {
+  const subject = `[${organizationName || 'Attendix'}] Your account login credentials`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+      <h2>Welcome to ${organizationName || 'Attendix'}</h2>
+      <p>Hi ${employeeName || 'Employee'},</p>
+      <p>Your account has been created. Use the credentials below to log in:</p>
+      <div style="background-color: #f8f9fa; padding: 15px; border-radius: 6px; margin: 15px 0;">
+        <p><strong>Email:</strong> ${employeeEmail}</p>
+        <p><strong>Password:</strong> ${password}</p>
+      </div>
+      <p>Please change your password after your first login.</p>
+    </div>
+  `;
+
+  return {
+    to: employeeEmail,
+    subject,
+    html
+  };
+}
+
+async function sendEmployeeCredentialsEmail({ employeeEmail, employeeName, organizationName, password }) {
+  if (!employeeEmail) {
+    throw new Error('Employee email is required');
+  }
+  if (!password) {
+    throw new Error('Password is required');
+  }
+
+  const mail = buildEmployeeCredentialsEmail({
+    employeeEmail,
+    employeeName,
+    organizationName,
+    password
+  });
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@attendix.local';
+  return sendMail({ from, ...mail });
+}
+
 module.exports = {
   sendNewLeaveRequestEmail,
-  sendLeaveStatusEmail
+  sendLeaveStatusEmail,
+  sendEmployeeCredentialsEmail
 };
 
 

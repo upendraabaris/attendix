@@ -1,4 +1,22 @@
 const pool = require("../configure/dbConfig");
+const bcrypt = require("bcrypt");
+const crypto = require("crypto");
+const { sendEmployeeCredentialsEmail } = require("../services/emailService");
+
+function generateRandomPassword(length = 6) {
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  const digits = "0123456789";
+  const allChars = letters + digits;
+
+  let password = letters.charAt(crypto.randomInt(0, letters.length));
+  password += digits.charAt(crypto.randomInt(0, digits.length));
+
+  for (let i = 2; i < length; i += 1) {
+    password += allChars.charAt(crypto.randomInt(0, allChars.length));
+  }
+
+  return password;
+}
 
 const getAllEmployees = async (req, res) => {
   const orgID = req.user.organization_id;
@@ -54,6 +72,7 @@ const getAllEmployees = async (req, res) => {
 
 const addEmployee = async (req, res) => {
   const admin_employee_id = req.user.employee_id;
+  const organization_id = req.user.organization_id;
   console.log(admin_employee_id);
   const {
     name,
@@ -62,7 +81,12 @@ const addEmployee = async (req, res) => {
     role = 'employee'
   } = req.body.params;
 
+  let transactionCommitted = false;
+  let createdEmployeeData = null;
+
   try {
+    await pool.query("BEGIN");
+
     const result = await pool.query(
       `SELECT * FROM add_employee_by_admin_id($1, $2, $3, $4, $5)`,
       [
@@ -73,18 +97,59 @@ const addEmployee = async (req, res) => {
         role
       ]
     );
+    createdEmployeeData = result.rows[0];
+
+    const generatedPassword = generateRandomPassword(6);
+    const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+
+    const updateResult = await pool.query(
+      `
+      UPDATE users u
+      SET password_hash = $1
+      FROM employees e
+      WHERE u.employee_id = e.id
+        AND u.email = $2
+        AND e.organization_id = $3
+      RETURNING u.id
+      `,
+      [hashedPassword, email, organization_id]
+    );
+
+    if (updateResult.rows.length === 0) {
+      throw new Error("Employee user record not found for password setup");
+    }
+
+    await pool.query("COMMIT");
+    transactionCommitted = true;
+
+    await sendEmployeeCredentialsEmail({
+      employeeEmail: email,
+      employeeName: name,
+      organizationName: process.env.ORG_NAME || "Attendix",
+      password: generatedPassword
+    });
 
     return res.status(200).json({
       statusCode: 200,
-      message: 'Employee added successfully',
-      data: result.rows[0]
+      message: "Employee added successfully. Login credentials sent to employee email.",
+      data: createdEmployeeData
     });
   } catch (error) {
-    console.error('Error:', error);
-    return res.status(500).json({
-      statusCode: 500,
-      message: 'Failed to add employee',
-      error: error.message
+    if (!transactionCommitted) {
+      await pool.query("ROLLBACK");
+      console.error('Error:', error);
+      return res.status(500).json({
+        statusCode: 500,
+        message: 'Failed to add employee',
+        error: error.message
+      });
+    }
+
+    console.error('Employee created but credential email failed:', error.message);
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Employee added successfully, but credential email could not be sent. Please verify SMTP settings.",
+      data: createdEmployeeData
     });
   }
 };

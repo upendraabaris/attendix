@@ -2,7 +2,15 @@ const router = require("express").Router();
 const { authenticate } = require("../middleware/authMiddleware");
 
 
-const { loginAdmin, loginEmployee, getOrganizationsByPhone, registerUser, loginAdminDashboard, changePassword } = require("../controllers/authCtrl");
+const {
+  loginAdmin,
+  loginEmployee,
+  getOrganizationsByPhone,
+  registerUser,
+  loginAdminDashboard,
+  loginEmployeeDashboard,
+  changePassword
+} = require("../controllers/authCtrl");
 
 // Admin login with email + password
 router.post('/admin-login', loginAdmin);
@@ -18,6 +26,9 @@ router.post('/register', registerUser);
 
 // Admin login dashboard
 router.post('/admin-dashboard', loginAdminDashboard);
+
+// Employee web login with email + password
+router.post('/employee/login/web', loginEmployeeDashboard);
 
 // Change password (authenticated user only)
 router.post('/change-password', authenticate, changePassword);

@@ -2,11 +2,11 @@ const pool = require("../configure/dbConfig");
 const { sendNewLeaveRequestEmail, sendLeaveStatusEmail } = require("../services/emailService");
 
 const createLeaveRequest = async (req, res) => {
-  const { type, startDate, endDate, reason } = req.body;
+  const { type, startDate, endDate, reason, duration_type, startTime, endTime } = req.body;
   const employeeId = req.user.employee_id;
 
   try {
-    // Validate input
+    // Basic validation
     if (!type || !startDate || !endDate) {
       return res.status(400).json({
         statusCode: 400,
@@ -14,10 +14,36 @@ const createLeaveRequest = async (req, res) => {
       });
     }
 
-    // Call the PostgreSQL function to create leave request
+    const dur = duration_type || 'full_day';
+
+    if (dur === 'hourly') {
+      if (!startTime || !endTime) {
+        return res.status(400).json({
+          statusCode: 400,
+          message: 'Start time and end time are required for hourly leave'
+        });
+      }
+      // optional: enforce same date on client; server function also checks it
+      if (new Date(startDate).toDateString() !== new Date(endDate).toDateString()) {
+        return res.status(400).json({
+          statusCode: 400,
+          message: 'Hourly leave must start and end on the same date'
+        });
+      }
+    }
+
     const result = await pool.query(
-      'SELECT * FROM create_leave_request($1, $2, $3, $4, $5)',
-      [employeeId, type, startDate, endDate, reason]
+      'SELECT * FROM create_leave_request($1, $2, $3, $4, $5, $6, $7, $8)',
+      [
+        employeeId,
+        type,
+        startDate,
+        endDate,
+        reason,
+        dur,              // p_duration_type
+        startTime || null, // p_start_time (string like '14:30:00' or null)
+        endTime || null   // p_end_time
+      ]
     );
 
     // Attempt to email the admin about the new leave request (non-blocking of API success)
@@ -70,6 +96,7 @@ const createLeaveRequest = async (req, res) => {
   }
 };
 
+
 /**
  * Get leave requests for the logged-in employee
  * @param {Object} req - Express request object
@@ -96,6 +123,10 @@ const getMyLeaveRequests = async (req, res) => {
         month: 'long',
         day: 'numeric',
       }),
+      // ⭐ NEW: Include time for hourly leave
+      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
+      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
+
     }));
 
 
@@ -128,10 +159,16 @@ const getEmployeeLeaveRequests = async (req, res) => {
       [employeeId]
     );
 
+    const formattedRows = result.rows.map(row => ({
+      ...row,
+      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
+      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
+    }));
+
     res.status(200).json({
       statusCode: 200,
       message: 'Leave requests retrieved successfully',
-      data: result.rows
+      data: formattedRows
     });
   } catch (error) {
     console.error('Error retrieving leave requests:', error);
@@ -169,7 +206,10 @@ const getAllLeaveRequests = async (req, res) => {
         year: 'numeric',
         month: 'short',
         day: 'numeric'
-      })
+      }),
+      // ⭐ NEW
+      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
+      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
     }));
     console.log('Formatted Result:', formattedDate);
 
@@ -197,12 +237,19 @@ const getPendingLeaveRequests = async (req, res) => {
   try {
     const result = await pool.query(`SELECT * FROM get_pending_leave_requests(${orgID})`);
 
+
+    const formattedRows = result.rows.map(row => ({
+      ...row,
+      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
+      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
+    }));
+
     res.status(200).json({
       success: true, // ✅ Add this line
       statusCode: 200,
       count: result.rows.length,
       message: 'Pending leave requests retrieved successfully',
-      data: result.rows
+      data: formattedRows
     });
   } catch (error) {
     console.error('Error retrieving pending leave requests:', error);
@@ -258,17 +305,17 @@ const updateLeaveRequestStatus = async (req, res) => {
     try {
       const leaveData = result.rows[0];
       const employeeId = leaveData.employee_id;
-      
+
       // Fetch employee details for email
       const employeeResult = await pool.query(
         'SELECT name, email FROM employees WHERE id = $1',
         [employeeId]
       );
-      
+
       if (employeeResult.rows.length > 0) {
         const employee = employeeResult.rows[0];
         const organizationName = process.env.ORG_NAME || 'Attendix';
-        
+
         await sendLeaveStatusEmail({
           employeeEmail: employee.email,
           employeeName: employee.name,
@@ -281,7 +328,7 @@ const updateLeaveRequestStatus = async (req, res) => {
           },
           status
         });
-        
+
         console.log(`Leave ${status} email sent to ${employee.email}`);
       }
     } catch (emailError) {

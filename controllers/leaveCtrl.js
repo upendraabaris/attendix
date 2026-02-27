@@ -4,6 +4,7 @@ const { sendNewLeaveRequestEmail, sendLeaveStatusEmail } = require("../services/
 const createLeaveRequest = async (req, res) => {
   const { type, startDate, endDate, reason } = req.body;
   const employeeId = req.user.employee_id;
+  const organizationId = req.user.organization_id;
 
   try {
     // Validate input
@@ -22,8 +23,34 @@ const createLeaveRequest = async (req, res) => {
 
     // Attempt to email the admin about the new leave request (non-blocking of API success)
     try {
-      const adminEmail = process.env.ADMIN_EMAIL;
-      const organizationName = process.env.ORG_NAME || 'Attendix';
+      if (!organizationId) {
+        throw new Error('Organization ID is missing in token');
+      }
+
+      const adminResult = await pool.query(
+        `
+        SELECT
+          u.email AS admin_email,
+          o.name AS organization_name
+        FROM organizations o
+        JOIN employees e ON e.organization_id = o.id
+        JOIN users u ON u.employee_id = e.id
+        WHERE o.id = $1
+          AND e.role = 'admin'
+          AND e.status = 'active'
+          AND u.email IS NOT NULL
+        ORDER BY e.id ASC
+        LIMIT 1
+        `,
+        [organizationId]
+      );
+
+      if (!adminResult.rows.length) {
+        throw new Error(`No active admin email found for organization ${organizationId}`);
+      }
+
+      const adminEmail = adminResult.rows[0].admin_email;
+      const organizationName = adminResult.rows[0].organization_name || 'Attendix';
       // Prefer real employee name from DB to avoid sending the numeric ID
       let employeeName = null;
       try {

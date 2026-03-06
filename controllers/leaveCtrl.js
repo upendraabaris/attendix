@@ -89,10 +89,15 @@ const createLeaveRequest = async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating leave request:', error);
-    res.status(500).json({
-      statusCode: 500,
-      message: error.message || 'Failed to submit leave request',
-      error: error.message
+    const message = error.message || 'Failed to submit leave request';
+    const isValidationError =
+      error.code === 'P0001' ||
+      /required|invalid|overlap|exceed|insufficient|disabled|policy|before/i.test(message);
+
+    res.status(isValidationError ? 400 : 500).json({
+      statusCode: isValidationError ? 400 : 500,
+      message,
+      error: message
     });
   }
 };

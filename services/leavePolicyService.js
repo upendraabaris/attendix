@@ -98,6 +98,49 @@ const upsertLeavePolicy = async (organizationId, payload) => {
   return result.rows[0];
 };
 
+// const getLeavePoliciesByOrganization = async (organizationId) => {
+//   const result = await pool.query(
+//     `
+//       SELECT
+//         id,
+//         organization_id,
+//         leave_type,
+//         yearly_limit,
+//         is_enabled,
+//         earned_days_required,
+//         earned_leave_award,
+//         created_at
+//       FROM leave_policies
+//       WHERE organization_id = $1
+//     `,
+//     [organizationId]
+//   );
+
+//   const rowMap = result.rows.reduce((acc, row) => {
+//     acc[row.leave_type] = row;
+//     return acc;
+//   }, {});
+
+//   const merged = SUPPORTED_LEAVE_TYPES.map((leaveType) => {
+//     const existing = rowMap[leaveType];
+//     if (existing) {
+//       return existing;
+//     }
+//     return {
+//       id: null,
+//       organization_id: Number(organizationId),
+//       leave_type: leaveType,
+//       yearly_limit: 0,
+//       is_enabled: false,
+//       earned_days_required: leaveType === "earned" ? 20 : null,
+//       earned_leave_award: leaveType === "earned" ? 1 : null,
+//       created_at: null,
+//     };
+//   });
+
+//   return orderedPolicies(merged);
+// };
+
 const getLeavePoliciesByOrganization = async (organizationId) => {
   const result = await pool.query(
     `
@@ -112,33 +155,12 @@ const getLeavePoliciesByOrganization = async (organizationId) => {
         created_at
       FROM leave_policies
       WHERE organization_id = $1
+      ORDER BY id
     `,
     [organizationId]
   );
 
-  const rowMap = result.rows.reduce((acc, row) => {
-    acc[row.leave_type] = row;
-    return acc;
-  }, {});
-
-  const merged = SUPPORTED_LEAVE_TYPES.map((leaveType) => {
-    const existing = rowMap[leaveType];
-    if (existing) {
-      return existing;
-    }
-    return {
-      id: null,
-      organization_id: Number(organizationId),
-      leave_type: leaveType,
-      yearly_limit: 0,
-      is_enabled: false,
-      earned_days_required: leaveType === "earned" ? 20 : null,
-      earned_leave_award: leaveType === "earned" ? 1 : null,
-      created_at: null,
-    };
-  });
-
-  return orderedPolicies(merged);
+  return result.rows;
 };
 
 const updateLeavePolicy = async (organizationId, policyId, payload) => {

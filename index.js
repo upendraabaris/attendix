@@ -96,6 +96,7 @@ const authRoutes = require("./routes/authRoute");
 const employeesRoute = require("./routes/employeesRoute");
 const tasksRoute = require("./routes/tasksRoute");
 const workspaceRoute = require("./routes/workspaceRoute");
+const leavePolicyRoutes = require("./routes/leavePolicyRoutes");
 
 app.use("/api/attendance", attendanceRoute);
 app.use("/api/leave", leaveRoute);
@@ -104,6 +105,7 @@ app.use("/api/employee", employeesRoute);
 app.use("/api/admin", leaveRoute);
 app.use("/api/task", tasksRoute);
 app.use("/api/workspaces", workspaceRoute);
+app.use("/api/admin/leave-policy", leavePolicyRoutes);
 
 // ✅ Default route
 app.get("/", (req, res) => res.send("Hello world"));

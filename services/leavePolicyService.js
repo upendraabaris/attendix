@@ -1,4 +1,5 @@
 const pool = require("../configure/dbConfig");
+const { syncEarnedLeaveBalanceForEmployee } = require("./leaveBalanceService");
 
 const SUPPORTED_LEAVE_TYPES = ["sick", "vacation", "personal", "other", "earned"];
 
@@ -189,9 +190,84 @@ const updateLeavePolicy = async (organizationId, policyId, payload) => {
   return updated.rows[0];
 };
 
+const validateLeaveRequestAgainstPolicy = async ({
+  employeeId,
+  leaveType,
+  startDate,
+  endDate,
+}) => {
+  const policyResult = await pool.query(
+    `
+      SELECT
+        lp.*,
+        e.organization_id
+      FROM employees e
+      LEFT JOIN leave_policies lp
+        ON lp.organization_id = e.organization_id
+       AND lp.leave_type = $2
+      WHERE e.id = $1
+      LIMIT 1
+    `,
+    [employeeId, leaveType]
+  );
+
+  if (!policyResult.rows.length) {
+    throw new Error("Employee not found");
+  }
+
+  const policy = policyResult.rows[0];
+  if (!policy.id) {
+    throw new Error(`Leave policy is not configured for type "${leaveType}"`);
+  }
+
+  if (!policy.is_enabled) {
+    throw new Error(`Leave type "${leaveType}" is currently disabled`);
+  }
+
+  const requestedDays =
+    Math.floor(
+      (new Date(endDate).getTime() - new Date(startDate).getTime()) /
+        (1000 * 60 * 60 * 24)
+    ) + 1;
+
+  if (leaveType === "earned") {
+    const sync = await syncEarnedLeaveBalanceForEmployee(employeeId, new Date(startDate));
+    if (Number(sync.balance || 0) < requestedDays) {
+      throw new Error("Insufficient earned leave balance");
+    }
+    return;
+  }
+
+  const year = new Date(startDate).getUTCFullYear();
+  const yearStart = `${year}-01-01`;
+  const yearEnd = `${year}-12-31`;
+
+  const usageResult = await pool.query(
+    `
+      SELECT COALESCE(SUM(
+        LEAST(lr.end_date, $4::date) - GREATEST(lr.start_date, $3::date) + 1
+      ), 0)::numeric AS used_days
+      FROM leave_requests lr
+      WHERE lr.employee_id = $1
+        AND lr.type = $2
+        AND lr.status != 'rejected'
+        AND lr.start_date <= $4::date
+        AND lr.end_date >= $3::date
+    `,
+    [employeeId, leaveType, yearStart, yearEnd]
+  );
+
+  const usedDays = Number(usageResult.rows[0]?.used_days || 0);
+  const allowed = Number(policy.yearly_limit || 0);
+  if (usedDays + requestedDays > allowed) {
+    throw new Error(`Yearly leave limit exceeded for type "${leaveType}"`);
+  }
+};
+
 module.exports = {
   SUPPORTED_LEAVE_TYPES,
   upsertLeavePolicy,
   getLeavePoliciesByOrganization,
   updateLeavePolicy,
+  validateLeaveRequestAgainstPolicy,
 };

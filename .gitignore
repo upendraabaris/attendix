@@ -2,3 +2,4 @@
 node_modules
 ./configure/dbConfigserviceAccountKey.json
 .DS_Store
+migrations/

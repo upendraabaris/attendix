@@ -1,5 +1,7 @@
 const pool = require("../configure/dbConfig");
 const { sendNewLeaveRequestEmail, sendLeaveStatusEmail } = require("../services/emailService");
+const { validateLeaveRequestAgainstPolicy } = require("../services/leavePolicyService");
+const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
 
 const createLeaveRequest = async (req, res) => {
   const { type, startDate, endDate, reason } = req.body;
@@ -14,6 +16,20 @@ const createLeaveRequest = async (req, res) => {
         message: 'Type, start date, and end date are required'
       });
     }
+
+    if (new Date(endDate) < new Date(startDate)) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: 'End date cannot be before start date'
+      });
+    }
+
+    await validateLeaveRequestAgainstPolicy({
+      employeeId,
+      leaveType: type,
+      startDate,
+      endDate
+    });
 
     // Call the PostgreSQL function to create leave request
     const result = await pool.query(
@@ -290,6 +306,12 @@ const updateLeaveRequestStatus = async (req, res) => {
     try {
       const leaveData = result.rows[0];
       const employeeId = leaveData.employee_id;
+
+      try {
+        await syncEarnedLeaveBalanceForEmployee(employeeId);
+      } catch (syncErr) {
+        console.error("Earned leave balance sync on status update failed:", syncErr.message);
+      }
       
       // Fetch employee details for email
       const employeeResult = await pool.query(

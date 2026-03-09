@@ -23,8 +23,8 @@ DECLARE
   v_requested_days integer;
   v_org_id integer;
   v_policy leave_policies%ROWTYPE;
-  v_used_days numeric(10,2);
   v_available_earned numeric(10,2);
+  v_used_days numeric(10,2);
 BEGIN
   -- Existing validation
   IF p_start_date > p_end_date THEN
@@ -85,15 +85,7 @@ BEGIN
       AND elb.leave_type = 'earned'
     LIMIT 1;
 
-    SELECT COALESCE(SUM(lr.end_date - lr.start_date + 1), 0)
-    INTO v_used_days
-    FROM leave_requests lr
-    WHERE lr.employee_id = p_employee_id
-      AND lr.type = 'earned'
-      AND lr.status != 'rejected'
-      AND EXTRACT(YEAR FROM lr.start_date) = EXTRACT(YEAR FROM p_start_date);
-
-    IF (v_available_earned - v_used_days) < v_requested_days THEN
+    IF v_available_earned < v_requested_days THEN
       RAISE EXCEPTION 'Insufficient earned leave balance';
     END IF;
   ELSE

@@ -110,7 +110,7 @@ app.use("/api/admin/leave-policy", leavePolicyRoutes);
 app.get("/", (req, res) => res.send("Hello world"));
 
 // ✅ Start server
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.APP_PORT || 4000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });

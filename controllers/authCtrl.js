@@ -89,7 +89,7 @@ const loginAdmin = async (req, res) => {
 //         u.phone_number = $1 
 //         AND u.login_type = $2 
 //         AND e.organization_id = $3
-        
+
 
 //       `, [phone_number, 'mobile', organization_id]);
 //     const user = result.rows[0];
@@ -159,7 +159,7 @@ const loginEmployee = async (req, res) => {
         role: 'employee'
       },
       process.env.JWT_SECRET,
-      { expiresIn: '1d' }
+      { expiresIn: '365d' }
     );
 
     res.json({ token, user });

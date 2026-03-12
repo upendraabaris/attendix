@@ -8,7 +8,7 @@ const {
   updateLeaveRequestStatus
 } = require("../controllers/leaveCtrl");
 
-const { authenticate } = require("../middleware/authMiddleware");
+const { authenticate, authorizeRoles } = require("../middleware/authMiddleware");
 
 /**
  * @route POST /api/leave

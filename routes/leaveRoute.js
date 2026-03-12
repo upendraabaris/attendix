@@ -29,7 +29,7 @@ router.get('/my', authenticate, getMyLeaveRequests);
  * @desc Get leave requests for a specific employee
  * @access Private (Admin)
  */
-router.get('/employee/:employeeId', getEmployeeLeaveRequests);
+router.get('/employee/:employeeId', authenticate, authorizeRoles('admin'), getEmployeeLeaveRequests);
 
 /**
  * @route GET /api/leave
@@ -49,4 +49,3 @@ router.put('/update/:leaveId', authenticate, updateLeaveRequestStatus);
 router.get('/admin/leave-requests/pending', authenticate, getPendingLeaveRequests);
 
 module.exports = router;
- 

@@ -1,12 +1,15 @@
 const pool = require("../configure/dbConfig");
 const { sendNewLeaveRequestEmail, sendLeaveStatusEmail } = require("../services/emailService");
+const { validateLeaveRequestAgainstPolicy } = require("../services/leavePolicyService");
+const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
 
 const createLeaveRequest = async (req, res) => {
-  const { type, startDate, endDate, reason, duration_type, startTime, endTime } = req.body;
+  const { type, startDate, endDate, reason } = req.body;
   const employeeId = req.user.employee_id;
+  const organizationId = req.user.organization_id;
 
   try {
-    // Basic validation
+    // Validate input
     if (!type || !startDate || !endDate) {
       return res.status(400).json({
         statusCode: 400,
@@ -14,42 +17,56 @@ const createLeaveRequest = async (req, res) => {
       });
     }
 
-    const dur = duration_type || 'full_day';
-
-    if (dur === 'hourly') {
-      if (!startTime || !endTime) {
-        return res.status(400).json({
-          statusCode: 400,
-          message: 'Start time and end time are required for hourly leave'
-        });
-      }
-      // optional: enforce same date on client; server function also checks it
-      if (new Date(startDate).toDateString() !== new Date(endDate).toDateString()) {
-        return res.status(400).json({
-          statusCode: 400,
-          message: 'Hourly leave must start and end on the same date'
-        });
-      }
+    if (new Date(endDate) < new Date(startDate)) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: 'End date cannot be before start date'
+      });
     }
 
+    await validateLeaveRequestAgainstPolicy({
+      employeeId,
+      leaveType: type,
+      startDate,
+      endDate
+    });
+
+    // Call the PostgreSQL function to create leave request
     const result = await pool.query(
-      'SELECT * FROM create_leave_request($1, $2, $3, $4, $5, $6, $7, $8)',
-      [
-        employeeId,
-        type,
-        startDate,
-        endDate,
-        reason,
-        dur,              // p_duration_type
-        startTime || null, // p_start_time (string like '14:30:00' or null)
-        endTime || null   // p_end_time
-      ]
+      'SELECT * FROM create_leave_request($1, $2, $3, $4, $5)',
+      [employeeId, type, startDate, endDate, reason]
     );
 
     // Attempt to email the admin about the new leave request (non-blocking of API success)
     try {
-      const adminEmail = process.env.ADMIN_EMAIL;
-      const organizationName = process.env.ORG_NAME || 'Attendix';
+      if (!organizationId) {
+        throw new Error('Organization ID is missing in token');
+      }
+
+      const adminResult = await pool.query(
+        `
+        SELECT
+          u.email AS admin_email,
+          o.name AS organization_name
+        FROM organizations o
+        JOIN employees e ON e.organization_id = o.id
+        JOIN users u ON u.employee_id = e.id
+        WHERE o.id = $1
+          AND e.role = 'admin'
+          AND e.status = 'active'
+          AND u.email IS NOT NULL
+        ORDER BY e.id ASC
+        LIMIT 1
+        `,
+        [organizationId]
+      );
+
+      if (!adminResult.rows.length) {
+        throw new Error(`No active admin email found for organization ${organizationId}`);
+      }
+
+      const adminEmail = adminResult.rows[0].admin_email;
+      const organizationName = adminResult.rows[0].organization_name || 'Attendix';
       // Prefer real employee name from DB to avoid sending the numeric ID
       let employeeName = null;
       try {
@@ -88,14 +105,18 @@ const createLeaveRequest = async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating leave request:', error);
-    res.status(500).json({
-      statusCode: 500,
-      message: error.message || 'Failed to submit leave request',
-      error: error.message
+    const message = error.message || 'Failed to submit leave request';
+    const isValidationError =
+      error.code === 'P0001' ||
+      /required|invalid|overlap|exceed|insufficient|disabled|policy|before/i.test(message);
+
+    res.status(isValidationError ? 400 : 500).json({
+      statusCode: isValidationError ? 400 : 500,
+      message,
+      error: message
     });
   }
 };
-
 
 /**
  * Get leave requests for the logged-in employee
@@ -123,10 +144,6 @@ const getMyLeaveRequests = async (req, res) => {
         month: 'long',
         day: 'numeric',
       }),
-      // ⭐ NEW: Include time for hourly leave
-      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
-      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
-
     }));
 
 
@@ -159,16 +176,10 @@ const getEmployeeLeaveRequests = async (req, res) => {
       [employeeId]
     );
 
-    const formattedRows = result.rows.map(row => ({
-      ...row,
-      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
-      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
-    }));
-
     res.status(200).json({
       statusCode: 200,
       message: 'Leave requests retrieved successfully',
-      data: formattedRows
+      data: result.rows
     });
   } catch (error) {
     console.error('Error retrieving leave requests:', error);
@@ -191,7 +202,8 @@ const getAllLeaveRequests = async (req, res) => {
   const orgID = req.user.organization_id;
   try {
     const result = await pool.query(
-      `SELECT * FROM get_all_leave_requests(${orgID})`,
+      'SELECT * FROM get_all_leave_requests($1)',
+      [orgID]
     );
     console.log(result)
 
@@ -206,10 +218,7 @@ const getAllLeaveRequests = async (req, res) => {
         year: 'numeric',
         month: 'short',
         day: 'numeric'
-      }),
-      // ⭐ NEW
-      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
-      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
+      })
     }));
     console.log('Formatted Result:', formattedDate);
 
@@ -235,21 +244,14 @@ const getAllLeaveRequests = async (req, res) => {
 const getPendingLeaveRequests = async (req, res) => {
   const orgID = req.user.organization_id;
   try {
-    const result = await pool.query(`SELECT * FROM get_pending_leave_requests(${orgID})`);
-
-
-    const formattedRows = result.rows.map(row => ({
-      ...row,
-      start_time: row.start_time ? row.start_time.slice(0, 5) : null,
-      end_time: row.end_time ? row.end_time.slice(0, 5) : null,
-    }));
+    const result = await pool.query('SELECT * FROM get_pending_leave_requests($1)', [orgID]);
 
     res.status(200).json({
       success: true, // ✅ Add this line
       statusCode: 200,
       count: result.rows.length,
       message: 'Pending leave requests retrieved successfully',
-      data: formattedRows
+      data: result.rows
     });
   } catch (error) {
     console.error('Error retrieving pending leave requests:', error);
@@ -305,6 +307,12 @@ const updateLeaveRequestStatus = async (req, res) => {
     try {
       const leaveData = result.rows[0];
       const employeeId = leaveData.employee_id;
+
+      try {
+        await syncEarnedLeaveBalanceForEmployee(employeeId);
+      } catch (syncErr) {
+        console.error("Earned leave balance sync on status update failed:", syncErr.message);
+      }
 
       // Fetch employee details for email
       const employeeResult = await pool.query(

@@ -5,7 +5,7 @@ const {
   getAllAttendance
 } = require("../controllers/attendanceCtrl");
 
-const { authenticate } = require("../middleware/authMiddleware");
+const { authenticate, authorizeRoles } = require("../middleware/authMiddleware");
 
 /**
  * @route GET /api/attendance/employee/:employeeId
@@ -19,7 +19,7 @@ router.get('/employee', authenticate, getEmployeeAttendance);
  * @desc Get all attendance records
  * @access Private (Admin)
  */
-router.get('/', getAllAttendance);
+router.get('/', authenticate, authorizeRoles('admin'), getAllAttendance);
 
 /**
  * @route GET /api/leave/employee/:employeeId
@@ -39,9 +39,9 @@ router.post('/addEmployee', authenticate, addEmployee);
 
 router.get('/latestActivity', authenticate, getLatestActivity);
 
-router.get('/getEmployeeById/:id', getEmployeeById);
+router.get('/getEmployeeById/:id', authenticate, getEmployeeById);
 
-router.put('/updateEmployee/:id', updateEmployee);
+router.put('/updateEmployee/:id', authenticate, authorizeRoles('admin'), updateEmployee);
 
 
 

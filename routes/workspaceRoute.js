@@ -14,9 +14,6 @@
 // router.get("/emp/workspace",authenticate, getAllWorkspacesByEmployeeId);
 
 // module.exports = router;
-
-
-// routes/workspaceRoute.js
 const express = require("express");
 const router = express.Router();
 const {

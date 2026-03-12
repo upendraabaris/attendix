@@ -341,6 +341,74 @@ const loginAdminDashboard = async (req, res) => {
   }
 };
 
+// Employee Login with Email + Password (Web Dashboard)
+const loginEmployeeDashboard = async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  try {
+    const result = await db.query(
+      `
+      SELECT
+        u.id AS user_id,
+        u.employee_id,
+        e.name AS employee_name,
+        u.email,
+        u.password_hash,
+        u.login_type,
+        u.created_at,
+        e.organization_id,
+        e.status AS employee_status,
+        e.role AS employee_role
+      FROM users u
+      JOIN employees e ON u.employee_id = e.id
+      WHERE u.email = $1
+      `,
+      [email]
+    );
+
+    const user = result.rows[0];
+
+    if (!user) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    if (user.employee_status !== 'active') {
+      return res.status(403).json({ error: 'Employee account is inactive' });
+    }
+
+    if (user.employee_role === 'admin') {
+      return res.status(403).json({ error: 'Access denied: Admin must use admin login' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign(
+      {
+        user_id: user.user_id,
+        employee_id: user.employee_id,
+        organization_id: user.organization_id,
+        role: 'employee'
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
+    delete user.password_hash;
+
+    return res.json({ token, user });
+  } catch (err) {
+    console.error('Employee email login error:', err);
+    return res.status(500).json({ error: 'Login error', details: err.message });
+  }
+};
+
 // Change Password (Authenticated)
 // ================================
 const changePassword = async (req, res) => {
@@ -384,5 +452,6 @@ module.exports = {
   getOrganizationsByPhone,
   registerUser,
   loginAdminDashboard,
+  loginEmployeeDashboard,
   changePassword
 };

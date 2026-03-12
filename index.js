@@ -72,7 +72,7 @@ const server = http.createServer(app);
 // ✅ Initialize Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: "*", // You can restrict this to your frontend domain
+    origin: process.env.ALLOWED_ORIGIN,
     methods: ["GET", "POST"],
   },
 });
@@ -96,20 +96,21 @@ const authRoutes = require("./routes/authRoute");
 const employeesRoute = require("./routes/employeesRoute");
 const tasksRoute = require("./routes/tasksRoute");
 const workspaceRoute = require("./routes/workspaceRoute");
+const leavePolicyRoutes = require("./routes/leavePolicyRoutes");
 
 app.use("/api/attendance", attendanceRoute);
 app.use("/api/leave", leaveRoute);
 app.use("/api/auth", authRoutes);
 app.use("/api/employee", employeesRoute);
-app.use("/api/admin", leaveRoute);
 app.use("/api/task", tasksRoute);
 app.use("/api/workspaces", workspaceRoute);
+app.use("/api/admin/leave-policy", leavePolicyRoutes);
 
 // ✅ Default route
 app.get("/", (req, res) => res.send("Hello world"));
 
 // ✅ Start server
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });

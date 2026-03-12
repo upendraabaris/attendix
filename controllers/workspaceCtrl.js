@@ -56,7 +56,6 @@
 //   }
 // };
 
-
 const pool = require("../configure/dbConfig");
 
 exports.getAllWorkspaces = async (req, res) => {
@@ -135,4 +134,3 @@ exports.getAllWorkspacesByEmployeeId = async (req, res) => {
     res.status(500).json({ message: "Server error while fetching workspaces" });
   }
 };
-

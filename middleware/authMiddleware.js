@@ -16,6 +16,8 @@ const authenticate = (req, res, next) => {
   } catch (err) {
     return res.status(401).json({ error: 'Unauthorized: Invalid token' });
   }
+
+
 };
 
 const authorizeRoles = (...roles) => {

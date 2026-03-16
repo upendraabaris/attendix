@@ -21,7 +21,7 @@ function generateRandomPassword(length = 6) {
 const getAllEmployees = async (req, res) => {
   const orgID = req.user.organization_id;
   try {
-    const result = await pool.query(`SELECT * FROM get_all_employees(${orgID})`);
+    const result = await pool.query('SELECT * FROM get_all_employees($1)', [orgID]);
     res.status(200).json({ data: result.rows, message: "success", count: result.rows.length });
   } catch (error) {
     console.error('Error fetching employees:', error);

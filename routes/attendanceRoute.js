@@ -9,7 +9,7 @@ const {
   getParticularAttendance
 } = require("../controllers/attendanceCtrl");
 
-const { authenticate } = require("../middleware/authMiddleware");
+const { authenticate, authorizeRoles } = require("../middleware/authMiddleware");
 
 /**
  * @route POST /api/attendance/clock-in
@@ -33,9 +33,9 @@ router.post('/clock-out', authenticate, clockOut);
 router.get('/my', authenticate, getMyAttendance);
 
 
-router.get('/admin/all-employee-attendance', getAllAttendance);
+router.get('/admin/all-employee-attendance', authenticate, authorizeRoles('admin'), getAllAttendance);
 
-router.post('/admin/get-single-attendance', getAttendanceByAdmin);
+router.post('/admin/get-single-attendance', authenticate, authorizeRoles('admin'), getAttendanceByAdmin);
 
 router.get('/admin/get-particular-attendance', authenticate, getParticularAttendance);
 

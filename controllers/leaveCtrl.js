@@ -202,7 +202,8 @@ const getAllLeaveRequests = async (req, res) => {
   const orgID = req.user.organization_id;
   try {
     const result = await pool.query(
-      `SELECT * FROM get_all_leave_requests(${orgID})`,
+      'SELECT * FROM get_all_leave_requests($1)',
+      [orgID]
     );
     console.log(result)
 
@@ -243,7 +244,7 @@ const getAllLeaveRequests = async (req, res) => {
 const getPendingLeaveRequests = async (req, res) => {
   const orgID = req.user.organization_id;
   try {
-    const result = await pool.query(`SELECT * FROM get_pending_leave_requests(${orgID})`);
+    const result = await pool.query('SELECT * FROM get_pending_leave_requests($1)', [orgID]);
 
     res.status(200).json({
       success: true, // ✅ Add this line
@@ -312,17 +313,17 @@ const updateLeaveRequestStatus = async (req, res) => {
       } catch (syncErr) {
         console.error("Earned leave balance sync on status update failed:", syncErr.message);
       }
-      
+
       // Fetch employee details for email
       const employeeResult = await pool.query(
         'SELECT name, email FROM employees WHERE id = $1',
         [employeeId]
       );
-      
+
       if (employeeResult.rows.length > 0) {
         const employee = employeeResult.rows[0];
         const organizationName = process.env.ORG_NAME || 'Attendix';
-        
+
         await sendLeaveStatusEmail({
           employeeEmail: employee.email,
           employeeName: employee.name,
@@ -335,7 +336,7 @@ const updateLeaveRequestStatus = async (req, res) => {
           },
           status
         });
-        
+
         console.log(`Leave ${status} email sent to ${employee.email}`);
       }
     } catch (emailError) {

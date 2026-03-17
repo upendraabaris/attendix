@@ -328,6 +328,7 @@ const loginAdminDashboard = async (req, res) => {
         role: 'admin'
       },
       process.env.JWT_SECRET,
+      //token valid for 1 day for dashboard access (can be adjusted as needed)
       { expiresIn: '1d' }
     );
 

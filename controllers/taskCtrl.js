@@ -411,8 +411,31 @@ const getAllEmployeesTasks = async (req, res) => {
   const { status } = req.query;
 
   try {
-    const result = await pool.query("SELECT * FROM get_all_employees_tasks_v2($1)", [organizationId]);
-    let tasks = result.rows;
+    // Fetch all employees
+    const employeesResult = await pool.query('SELECT * FROM get_all_employees($1)', [organizationId]);
+    const employees = employeesResult.rows;
+
+    // Fetch all tasks
+    const tasksResult = await pool.query("SELECT * FROM get_all_employees_tasks_v2($1)", [organizationId]);
+    let tasks = tasksResult.rows;
+
+    // Filter out rows where all task fields are null (employee with no tasks)
+    tasks = tasks.filter(task => {
+      // List all task fields that should be non-null for a real task
+      return (
+        task.task_id !== null ||
+        task.title !== null ||
+        task.description !== null ||
+        task.due_date !== null ||
+        task.completed !== null ||
+        task.created_at !== null ||
+        task.updated_at !== null ||
+        task.attachment !== null ||
+        task.workspace_id !== null ||
+        task.workspace_name !== null ||
+        task.status !== null
+      );
+    });
 
     if (status === "completed") {
       tasks = tasks.filter((task) => task.completed === true);
@@ -420,21 +443,15 @@ const getAllEmployeesTasks = async (req, res) => {
       tasks = tasks.filter((task) => task.completed === false);
     }
 
+    // Group tasks by employee_id
     const groupedTasks = {};
     for (const task of tasks) {
       const empId = task.employee_id;
       if (!groupedTasks[empId]) {
-        groupedTasks[empId] = {
-          employee_id: empId,
-          name: task.name,
-          email: task.email,
-          tasks: [],
-        };
+        groupedTasks[empId] = [];
       }
-
       const rawDueDate = toUtcDateOnly(task.due_date);
-
-      groupedTasks[empId].tasks.push({
+      groupedTasks[empId].push({
         task_id: task.task_id,
         title: task.title,
         description: task.description,
@@ -451,13 +468,20 @@ const getAllEmployeesTasks = async (req, res) => {
         recurrence_days: task.recurrence_days || null,
         recurrence_end_date: formatDate(task.recurrence_end_date),
       });
-
     }
+
+    // Merge employees and their tasks
+    const merged = employees.map(emp => ({
+      employee_id: emp.id,
+      name: emp.name,
+      email: emp.email,
+      tasks: groupedTasks[emp.id] || [],
+    }));
 
     return res.status(200).json({
       statusCode: 200,
       message: "All employees tasks fetched successfully",
-      data: Object.values(groupedTasks),
+      data: merged,
     });
   } catch (error) {
     console.error("Error fetching all employees tasks:", error);

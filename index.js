@@ -97,6 +97,9 @@ const employeesRoute = require("./routes/employeesRoute");
 const tasksRoute = require("./routes/tasksRoute");
 const workspaceRoute = require("./routes/workspaceRoute");
 const leavePolicyRoutes = require("./routes/leavePolicyRoutes");
+const workWeekPolicyRoute = require("./routes/workWeekPolicyRoute");
+const holidayRoute = require("./routes/holidayRoute");
+const compOffRoute = require("./routes/compOffRoute");
 
 app.use("/api/attendance", attendanceRoute);
 app.use("/api/leave", leaveRoute);
@@ -105,6 +108,9 @@ app.use("/api/employee", employeesRoute);
 app.use("/api/task", tasksRoute);
 app.use("/api/workspaces", workspaceRoute);
 app.use("/api/admin/leave-policy", leavePolicyRoutes);
+app.use("/api/work-week-policy", workWeekPolicyRoute);
+app.use("/api/holidays", holidayRoute);
+app.use("/api/comp-off", compOffRoute);
 
 // ✅ Default route
 app.get("/", (req, res) => res.send("Hello world"));

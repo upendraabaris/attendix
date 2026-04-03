@@ -2,6 +2,7 @@ const pool = require("../configure/dbConfig");
 const { sendNewLeaveRequestEmail, sendLeaveStatusEmail } = require("../services/emailService");
 const { validateLeaveRequestAgainstPolicy } = require("../services/leavePolicyService");
 const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
+const { getEmployeeLeaveBalances } = require("../services/leaveBalanceService");
 
 const createLeaveRequest = async (req, res) => {
   const { type, startDate, endDate, reason } = req.body;
@@ -158,6 +159,33 @@ const getMyLeaveRequests = async (req, res) => {
       statusCode: 500,
       message: 'Failed to retrieve leave requests',
       error: error.message
+    });
+  }
+};
+
+const getMyLeaveBalances = async (req, res) => {
+  const employeeId = req.user.employee_id;
+
+  try {
+    try {
+      await syncEarnedLeaveBalanceForEmployee(employeeId);
+    } catch (syncErr) {
+      console.error("Earned leave balance sync on fetch failed:", syncErr.message);
+    }
+
+    const balances = await getEmployeeLeaveBalances(employeeId);
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Leave balances retrieved successfully",
+      data: balances,
+    });
+  } catch (error) {
+    console.error("Error retrieving leave balances:", error);
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to retrieve leave balances",
+      error: error.message,
     });
   }
 };
@@ -395,6 +423,7 @@ const updateLeaveRequestStatus = async (req, res) => {
 module.exports = {
   createLeaveRequest,
   getMyLeaveRequests,
+  getMyLeaveBalances,
   getEmployeeLeaveRequests,
   getAllLeaveRequests,
   getPendingLeaveRequests,

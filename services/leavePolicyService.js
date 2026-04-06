@@ -2,6 +2,7 @@ const pool = require("../configure/dbConfig");
 const { syncEarnedLeaveBalanceForEmployee } = require("./leaveBalanceService");
 
 const SUPPORTED_LEAVE_TYPES = ["sick", "vacation", "personal", "other", "earned","casual","compensation"];
+const COMP_OFF_LEAVE_TYPES = ["compensation", "comp_off"];
 
 const orderedPolicies = (rows = []) => {
   const order = ["sick", "vacation", "personal", "other", "earned"];
@@ -251,6 +252,47 @@ const validateLeaveRequestAgainstPolicy = async ({
       (new Date(endDate).getTime() - new Date(startDate).getTime()) /
         (1000 * 60 * 60 * 24)
     ) + 1;
+
+  if (COMP_OFF_LEAVE_TYPES.includes(leaveType)) {
+    const [balanceResult, pendingResult] = await Promise.all([
+      pool.query(
+        `
+          SELECT COUNT(*) FILTER (
+            WHERE comp_leave_used = false
+              AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
+          )::int AS available_balance
+          FROM compensation_earned
+          WHERE employee_id = $1
+        `,
+        [employeeId]
+      ),
+      pool.query(
+        `
+          SELECT COALESCE(SUM(lr.end_date - lr.start_date + 1), 0)::int AS pending_days
+          FROM leave_requests lr
+          WHERE lr.employee_id = $1
+            AND lr.type = $2
+            AND lr.status = 'pending'
+        `,
+        [employeeId, leaveType]
+      ),
+    ]);
+
+    const availableBalance = Number(balanceResult.rows[0]?.available_balance || 0);
+    const pendingDays = Number(pendingResult.rows[0]?.pending_days || 0);
+    const remainingBalance = availableBalance - pendingDays;
+
+    if (remainingBalance < requestedDays) {
+      throw new Error(
+        `Insufficient ${leaveType} leave balance. Available: ${Math.max(
+          remainingBalance,
+          0
+        )} day(s), Requested: ${requestedDays} day(s)`
+      );
+    }
+
+    return;
+  }
 
   if (leaveType === "earned" || leaveType === "casual") {
     const sync = await syncEarnedLeaveBalanceForEmployee(employeeId,leaveType, new Date(startDate));

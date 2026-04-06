@@ -1,7 +1,7 @@
 const pool = require("../configure/dbConfig");
 const { syncEarnedLeaveBalanceForEmployee } = require("./leaveBalanceService");
 
-const SUPPORTED_LEAVE_TYPES = ["sick", "vacation", "personal", "other", "earned","casual"];
+const SUPPORTED_LEAVE_TYPES = ["sick", "vacation", "personal", "other", "earned","casual","compensation"];
 
 const orderedPolicies = (rows = []) => {
   const order = ["sick", "vacation", "personal", "other", "earned"];
@@ -39,7 +39,7 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
   }
 
   const leaveType = normalized.leave_type;
-  if (leaveType === "earned") {
+  if (leaveType === "earned" || leaveType === "casual") {
     if (
       normalized.earned_days_required !== undefined &&
       normalized.earned_days_required !== null
@@ -252,10 +252,10 @@ const validateLeaveRequestAgainstPolicy = async ({
         (1000 * 60 * 60 * 24)
     ) + 1;
 
-  if (leaveType === "earned") {
-    const sync = await syncEarnedLeaveBalanceForEmployee(employeeId, new Date(startDate));
+  if (leaveType === "earned" || leaveType === "casual") {
+    const sync = await syncEarnedLeaveBalanceForEmployee(employeeId,leaveType, new Date(startDate));
     if (Number(sync.balance || 0) < requestedDays) {
-      throw new Error("Insufficient earned leave balance");
+      throw new Error(`Insufficient ${leaveType} leave balance`);
     }
     return;
   }

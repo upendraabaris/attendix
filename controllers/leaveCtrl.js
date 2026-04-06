@@ -168,9 +168,16 @@ const getMyLeaveBalances = async (req, res) => {
 
   try {
     try {
-      await syncEarnedLeaveBalanceForEmployee(employeeId);
+      await syncEarnedLeaveBalanceForEmployee(employeeId, 'earned');
     } catch (syncErr) {
       console.error("Earned leave balance sync on fetch failed:", syncErr.message);
+    }
+
+
+    try {
+      await syncEarnedLeaveBalanceForEmployee(employeeId, 'casual');
+    } catch (syncErr) {
+      console.error("Casual leave balance sync on fetch failed:", syncErr.message);
     }
 
     const balances = await getEmployeeLeaveBalances(employeeId);
@@ -337,9 +344,15 @@ const updateLeaveRequestStatus = async (req, res) => {
       const employeeId = leaveData.employee_id;
 
       try {
-        await syncEarnedLeaveBalanceForEmployee(employeeId);
+        await syncEarnedLeaveBalanceForEmployee(employeeId, 'earned');
       } catch (syncErr) {
         console.error("Earned leave balance sync on status update failed:", syncErr.message);
+      }
+
+      try {
+        await syncEarnedLeaveBalanceForEmployee(employeeId, 'casual');
+      } catch (syncErr) {
+        console.error("Casual leave balance sync on status update failed:", syncErr.message);
       }
 
       // Fetch employee details for email

@@ -9,6 +9,30 @@ const WORK_WEEK_POLICIES = {
 
 const DEFAULT_EXPIRY_DAYS = 30;
 
+const isValidDateInput = (value) => value && !Number.isNaN(new Date(value).getTime());
+
+const normalizeDateOnlyInput = (value) => {
+  if (!value) return null;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 const normalizePolicyName = (policyName) => {
   const value = String(policyName || "")
     .trim()
@@ -39,15 +63,30 @@ const validateWorkWeekPolicy = (payload = {}) => {
     );
   }
 
+  const policyStartDate = normalizeDateOnlyInput(
+    payload.policy_start_date || payload.policyStartDate || null
+  );
+  if (
+    normalized === "alternate_saturday_and_every_sunday_off" &&
+    (!policyStartDate || !isValidDateInput(policyStartDate))
+  ) {
+    throw new Error("policy_start_date is required for Alternate Saturday and Every Sunday Off");
+  }
+
+  if (policyStartDate && !isValidDateInput(policyStartDate)) {
+    throw new Error("policy_start_date must be a valid date");
+  }
+
   return {
     policy_name: normalized,
     policy_label: WORK_WEEK_POLICIES[normalized],
+    policy_start_date: policyStartDate,
   };
 };
 
 const validateHolidayInput = (payload = {}) => {
   const holidayName = String(payload.holiday_name || payload.holidayName || "").trim();
-  const holidayDate = String(payload.holiday_date || payload.holidayDate || "").trim();
+  const holidayDate = normalizeDateOnlyInput(payload.holiday_date || payload.holidayDate || "");
   const description =
     payload.description === undefined || payload.description === null
       ? null
@@ -72,6 +111,7 @@ const getWorkWeekPolicyByOrganization = async (organizationId) => {
   const result = await pool.query(
     `
       SELECT id, organization_id, policy_name, created_at, updated_at
+           , policy_start_date
       FROM work_week_policies
       WHERE organization_id = $1
       LIMIT 1
@@ -93,15 +133,16 @@ const upsertWorkWeekPolicy = async (organizationId, payload) => {
 
   const result = await pool.query(
     `
-      INSERT INTO work_week_policies (organization_id, policy_name, created_at, updated_at)
-      VALUES ($1, $2, NOW(), NOW())
+      INSERT INTO work_week_policies (organization_id, policy_name, policy_start_date, created_at, updated_at)
+      VALUES ($1, $2, $3, NOW(), NOW())
       ON CONFLICT (organization_id)
       DO UPDATE SET
         policy_name = EXCLUDED.policy_name,
+        policy_start_date = EXCLUDED.policy_start_date,
         updated_at = NOW()
-      RETURNING id, organization_id, policy_name, created_at, updated_at
+      RETURNING id, organization_id, policy_name, policy_start_date, created_at, updated_at
     `,
-    [organizationId, data.policy_name]
+    [organizationId, data.policy_name, data.policy_start_date]
   );
 
   return {
@@ -131,12 +172,13 @@ const updateWorkWeekPolicy = async (organizationId, policyId, payload) => {
     `
       UPDATE work_week_policies
       SET policy_name = $1,
+          policy_start_date = $2,
           updated_at = NOW()
-      WHERE id = $2
-        AND organization_id = $3
-      RETURNING id, organization_id, policy_name, created_at, updated_at
+      WHERE id = $3
+        AND organization_id = $4
+      RETURNING id, organization_id, policy_name, policy_start_date, created_at, updated_at
     `,
-    [data.policy_name, policyId, organizationId]
+    [data.policy_name, data.policy_start_date, policyId, organizationId]
   );
 
   return {
@@ -258,8 +300,10 @@ const hasCompletedAttendanceForDate = async (employeeId, workDate) => {
 
 const getSaturdayOccurrence = (dateValue) => Math.ceil(dateValue.getDate() / 7);
 
-const isWeeklyOffAsPerPolicy = (workDate, policyName) => {
-  const dateValue = new Date(`${workDate}T00:00:00`);
+const toDateOnly = (value) => new Date(`${value}T00:00:00`);
+
+const isWeeklyOffAsPerPolicy = (workDate, policyName, policyStartDate = null) => {
+  const dateValue = toDateOnly(workDate);
   const day = dateValue.getDay();
 
   if (day === 0) {
@@ -277,7 +321,17 @@ const isWeeklyOffAsPerPolicy = (workDate, policyName) => {
   }
 
   if (policyName === "alternate_saturday_and_every_sunday_off") {
-    return occurrence % 2 === 1;
+    if (!policyStartDate) {
+      return occurrence % 2 === 1;
+    }
+
+    const startDate = toDateOnly(policyStartDate);
+    if (startDate.getDay() !== 6 || dateValue < startDate) {
+      return false;
+    }
+
+    const diffDays = Math.floor((dateValue - startDate) / (1000 * 60 * 60 * 24));
+    return diffDays % 14 === 0;
   }
 
   if (policyName === "second_and_fourth_saturday_and_every_sunday_off") {
@@ -325,7 +379,7 @@ const evaluateCompOffEligibility = async ({ employeeId, organizationId, workDate
   }
 
   const policy = await getWorkWeekPolicyByOrganization(employee.organization_id);
-  if (isWeeklyOffAsPerPolicy(workDate, policy?.policy_name)) {
+  if (isWeeklyOffAsPerPolicy(workDate, policy?.policy_name, policy?.policy_start_date)) {
     return {
       eligible: true,
       reason: "weekly_off",

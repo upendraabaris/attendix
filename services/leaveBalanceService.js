@@ -100,7 +100,7 @@ const getConsumedEarnedLeaveDays = async (employeeId, year,type) => {
       FROM leave_requests lr
       WHERE lr.employee_id = $1
         AND lr.type = $4
-        AND lr.status != 'rejected'
+        AND lr.status = 'approved'
         AND lr.start_date <= $3::date
         AND lr.end_date >= $2::date
     `,

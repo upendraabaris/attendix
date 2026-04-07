@@ -1,6 +1,7 @@
 const pool = require("../configure/dbConfig");
 const { reverseGeocode, reverseGeocodeGoogle } = require('../services/geocodingService');
 const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
+const { earnCompOff } = require("../services/compOffService");
 
 
 const formatToIST = (utcDateTimeString) => {
@@ -63,9 +64,27 @@ const clockOut = async (req, res) => {
 
     // Non-blocking earned leave sync based on present/working days.
     try {
-      await syncEarnedLeaveBalanceForEmployee(employeeId);
+      await syncEarnedLeaveBalanceForEmployee(employeeId,'earned');
     } catch (earnedSyncError) {
       console.error("Earned leave sync failed:", earnedSyncError.message);
+    }
+
+    
+    // Non-blocking earned leave sync based on present/working days.
+    try {
+      await syncEarnedLeaveBalanceForEmployee(employeeId,'casual');
+    } catch (earnedSyncError) {
+      console.error("Casual leave sync failed:", earnedSyncError.message);
+    }
+
+    try {
+      await earnCompOff({
+        employeeId,
+        organizationId: req.user.organization_id,
+        workDate: getISTDate(),
+      });
+    } catch (compOffError) {
+      console.error("Comp off earn sync failed:", compOffError.message);
     }
 
     res.status(200).json({

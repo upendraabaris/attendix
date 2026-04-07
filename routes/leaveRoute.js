@@ -2,6 +2,7 @@ const router = require("express").Router();
 const {
   createLeaveRequest,
   getMyLeaveRequests,
+  getMyLeaveBalances,
   getEmployeeLeaveRequests,
   getAllLeaveRequests,
   getPendingLeaveRequests,
@@ -23,6 +24,8 @@ router.post('/', authenticate, createLeaveRequest);
  * @access Private (Employee)
  */
 router.get('/my', authenticate, getMyLeaveRequests);
+
+router.get('/my-balances', authenticate, getMyLeaveBalances);
 
 /**
  * @route GET /api/leave/employee/:employeeId

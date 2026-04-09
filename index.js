@@ -52,7 +52,8 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
-const dotenv = require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+//const dotenv = require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+const dotenv = require("dotenv").config();
 const pool = require("./configure/dbConfig");
 const cors = require("cors");
 
@@ -118,3 +119,6 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
 
+console.log("DB HOST:", process.env.HOST);
+console.log("DB USER:", process.env.USER1);
+console.log("DB NAME:", process.env.DATABASE);

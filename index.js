@@ -51,6 +51,8 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const path = require("path");
+//const dotenv = require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 const dotenv = require("dotenv").config();
 const pool = require("./configure/dbConfig");
 const cors = require("cors");
@@ -97,9 +99,7 @@ const employeesRoute = require("./routes/employeesRoute");
 const tasksRoute = require("./routes/tasksRoute");
 const workspaceRoute = require("./routes/workspaceRoute");
 const leavePolicyRoutes = require("./routes/leavePolicyRoutes");
-const workWeekPolicyRoute = require("./routes/workWeekPolicyRoute");
-const holidayRoute = require("./routes/holidayRoute");
-const compOffRoute = require("./routes/compOffRoute");
+const appVersionRoute = require("./routes/appVersionRoute");
 
 app.use("/api/attendance", attendanceRoute);
 app.use("/api/leave", leaveRoute);
@@ -108,9 +108,7 @@ app.use("/api/employee", employeesRoute);
 app.use("/api/task", tasksRoute);
 app.use("/api/workspaces", workspaceRoute);
 app.use("/api/admin/leave-policy", leavePolicyRoutes);
-app.use("/api/work-week-policy", workWeekPolicyRoute);
-app.use("/api/holidays", holidayRoute);
-app.use("/api/comp-off", compOffRoute);
+app.use("/api/version", appVersionRoute);
 
 // ✅ Default route
 app.get("/", (req, res) => res.send("Hello world"));
@@ -121,3 +119,6 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
 
+console.log("DB HOST:", process.env.HOST);
+console.log("DB USER:", process.env.USER1);
+console.log("DB NAME:", process.env.DATABASE);

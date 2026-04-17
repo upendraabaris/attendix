@@ -569,6 +569,8 @@ module.exports = {
   WORK_WEEK_POLICIES,
   DEFAULT_EXPIRY_DAYS,
   getWorkWeekPolicyByOrganization,
+  getHolidayForDate,
+  isWeeklyOffAsPerPolicy,
   upsertWorkWeekPolicy,
   updateWorkWeekPolicy,
   createHoliday,

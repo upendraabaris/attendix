@@ -103,6 +103,8 @@ const workWeekPolicyRoute = require("./routes/workWeekPolicyRoute");
 const holidayRoute = require("./routes/holidayRoute");
 const compOffRoute = require("./routes/compOffRoute");
 const appVersionRoute = require("./routes/appVersionRoute");
+const autoAbsentRoute = require("./routes/autoAbsentRoute");
+const { startAutoAbsentScheduler } = require("./services/autoAbsentService");
 
 app.use("/api/attendance", attendanceRoute);
 app.use("/api/leave", leaveRoute);
@@ -115,6 +117,7 @@ app.use("/api/work-week-policy", workWeekPolicyRoute);
 app.use("/api/holidays", holidayRoute);
 app.use("/api/comp-off", compOffRoute);
 app.use("/api/version", appVersionRoute);
+app.use("/api/auto-absent", autoAbsentRoute);
 
 // ✅ Default route
 app.get("/", (req, res) => res.send("Hello world"));
@@ -124,6 +127,8 @@ const PORT = process.env.APP_PORT || 4000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
+startAutoAbsentScheduler();
 
 console.log("DB HOST:", process.env.HOST);
 console.log("DB USER:", process.env.USER1);

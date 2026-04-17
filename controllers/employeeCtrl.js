@@ -249,6 +249,4 @@ const updateEmployee = async (req, res) => {
   }
 };
 
-
-
-module.exports = { getAllEmployees, addEmployee, getLatestActivity, getEmployeeById, updateEmployee };
+module.exports = { getAllEmployees, addEmployee, getLatestActivity, getEmployeeById, updateEmployee, };

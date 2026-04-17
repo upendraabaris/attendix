@@ -103,6 +103,7 @@ const workWeekPolicyRoute = require("./routes/workWeekPolicyRoute");
 const holidayRoute = require("./routes/holidayRoute");
 const compOffRoute = require("./routes/compOffRoute");
 const appVersionRoute = require("./routes/appVersionRoute");
+const reportRoute = require("./routes/reportRoute");
 
 app.use("/api/attendance", attendanceRoute);
 app.use("/api/leave", leaveRoute);
@@ -115,6 +116,7 @@ app.use("/api/work-week-policy", workWeekPolicyRoute);
 app.use("/api/holidays", holidayRoute);
 app.use("/api/comp-off", compOffRoute);
 app.use("/api/version", appVersionRoute);
+app.use("/api/reports", reportRoute);
 
 // ✅ Default route
 app.get("/", (req, res) => res.send("Hello world"));

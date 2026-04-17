@@ -45,8 +45,6 @@ const createLeavePolicy = async (req, res) => {
 };
 
 const getLeavePolicies = async (req, res) => {
-  if (!ensureAdminAccess(req, res)) return;
-
   try {
     const organizationId = req.user.organization_id;
     if (!organizationId) {
@@ -112,3 +110,4 @@ module.exports = {
   getLeavePolicies,
   editLeavePolicy,
 };
+

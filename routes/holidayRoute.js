@@ -8,8 +8,9 @@ const {
 } = require("../controllers/compOffController");
 
 router.post("/", authenticate, authorizeRoles("admin"), addHoliday);
-router.get("/", authenticate, authorizeRoles("admin"), getHolidays);
+router.get("/", authenticate, authorizeRoles("admin", "employee"), getHolidays);
 router.put("/:id", authenticate, authorizeRoles("admin"), editHoliday);
 router.delete("/:id", authenticate, authorizeRoles("admin"), removeHoliday);
 
 module.exports = router;
+

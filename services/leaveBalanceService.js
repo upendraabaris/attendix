@@ -96,7 +96,11 @@ const getConsumedEarnedLeaveDays = async (employeeId, year,type) => {
   const { start, end } = getYearBounds(year);
   const result = await pool.query(
     `
-      SELECT COALESCE(SUM(lr.end_date - lr.start_date + 1), 0)::numeric AS consumed_days
+      SELECT COALESCE(SUM(
+        CASE WHEN lr.is_half_day THEN 0.5
+             ELSE (lr.end_date - lr.start_date + 1)::numeric
+        END
+      ), 0)::numeric AS consumed_days
       FROM leave_requests lr
       WHERE lr.employee_id = $1
         AND lr.type = $4
@@ -104,7 +108,7 @@ const getConsumedEarnedLeaveDays = async (employeeId, year,type) => {
         AND lr.start_date <= $3::date
         AND lr.end_date >= $2::date
     `,
-    [employeeId, start, end,type]
+    [employeeId, start, end, type]
   );
 
   return Number(result.rows[0]?.consumed_days || 0);

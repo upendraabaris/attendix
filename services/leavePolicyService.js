@@ -219,6 +219,7 @@ const validateLeaveRequestAgainstPolicy = async ({
   leaveType,
   startDate,
   endDate,
+  isHalfDay = false,
 }) => {
   const policyResult = await pool.query(
     `
@@ -248,15 +249,20 @@ const validateLeaveRequestAgainstPolicy = async ({
     throw new Error(`Leave type "${leaveType}" is currently disabled`);
   }
 
-  const requestedDays =
-    Math.floor(
-      (new Date(endDate).getTime() - new Date(startDate).getTime()) /
-        (1000 * 60 * 60 * 24)
-    ) + 1;
+  const requestedDays = isHalfDay
+    ? 0.5
+    : Math.floor(
+        (new Date(endDate).getTime() - new Date(startDate).getTime()) /
+          (1000 * 60 * 60 * 24)
+      ) + 1;
 
   const pendingResult = await pool.query(
     `
-      SELECT COALESCE(SUM(lr.end_date - lr.start_date + 1), 0)::int AS pending_days
+      SELECT COALESCE(SUM(
+        CASE WHEN lr.is_half_day THEN 0.5
+             ELSE (lr.end_date - lr.start_date + 1)::numeric
+        END
+      ), 0)::numeric AS pending_days
       FROM leave_requests lr
       WHERE lr.employee_id = $1
         AND lr.type = $2

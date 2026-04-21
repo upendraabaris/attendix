@@ -5,7 +5,8 @@ const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceS
 const { getEmployeeLeaveBalances } = require("../services/leaveBalanceService");
 
 const createLeaveRequest = async (req, res) => {
-  const { type, startDate, endDate, reason } = req.body;
+  const { type, startDate, endDate, reason, is_half_day } = req.body;
+  const isHalfDay = is_half_day === true || is_half_day === 'true';
   const employeeId = req.user.employee_id;
   const organizationId = req.user.organization_id;
 
@@ -25,17 +26,25 @@ const createLeaveRequest = async (req, res) => {
       });
     }
 
+    if (isHalfDay && startDate !== endDate) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: 'Half-day leave must be for a single date (startDate must equal endDate)'
+      });
+    }
+
     await validateLeaveRequestAgainstPolicy({
       employeeId,
       leaveType: type,
       startDate,
-      endDate
+      endDate,
+      isHalfDay
     });
 
     // Call the PostgreSQL function to create leave request
     const result = await pool.query(
-      'SELECT * FROM create_leave_request($1, $2, $3, $4, $5)',
-      [employeeId, type, startDate, endDate, reason]
+      'SELECT * FROM create_leave_request($1, $2, $3, $4, $5, $6)',
+      [employeeId, type, startDate, endDate, reason, isHalfDay]
     );
 
     // Attempt to email the admin about the new leave request (non-blocking of API success)

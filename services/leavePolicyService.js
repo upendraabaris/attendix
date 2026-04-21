@@ -1,9 +1,18 @@
 const pool = require("../configure/dbConfig");
 const { syncEarnedLeaveBalanceForEmployee } = require("./leaveBalanceService");
 
-const SUPPORTED_LEAVE_TYPES = ["sick", "vacation", "personal", "other", "earned","casual","compensation"];
+const SUPPORTED_LEAVE_TYPES = ["sick", "personal", "other", "earned","casual","compensation"];
 const COMP_OFF_LEAVE_TYPES = ["compensation", "comp_off"];
 const RULE_BASED_LEAVE_TYPES = ["earned", "casual"];
+const LEAVE_BALANCE_TYPE_ALIASES = {
+  vacation: "earned",
+};
+
+const getBalanceLeaveType = (leaveType) => LEAVE_BALANCE_TYPE_ALIASES[leaveType] || leaveType;
+const getLeaveTypesForBalance = (leaveType) => {
+  const balanceLeaveType = getBalanceLeaveType(leaveType);
+  return balanceLeaveType === "earned" ? ["earned", "vacation"] : [leaveType];
+};
 
 const orderedPolicies = (rows = []) => {
   const order = ["sick", "vacation", "personal", "other", "earned"];
@@ -23,7 +32,7 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
 
   if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "leave_type")) {
     if (!normalized.leave_type || !SUPPORTED_LEAVE_TYPES.includes(normalized.leave_type)) {
-      throw new Error("Invalid leave_type. Allowed: sick, vacation, personal, other, earned");
+      throw new Error("Invalid leave_type. Allowed: sick, personal, other, earned, casual, compensation");
     }
   }
 
@@ -157,6 +166,7 @@ const getLeavePoliciesByOrganization = async (organizationId) => {
         created_at
       FROM leave_policies
       WHERE organization_id = $1
+        AND leave_type <> 'vacation'
       ORDER BY id
     `,
     [organizationId]
@@ -220,6 +230,8 @@ const validateLeaveRequestAgainstPolicy = async ({
   startDate,
   endDate,
 }) => {
+  const balanceLeaveType = getBalanceLeaveType(leaveType);
+  const leaveTypesForBalance = getLeaveTypesForBalance(leaveType);
   const policyResult = await pool.query(
     `
       SELECT
@@ -232,7 +244,7 @@ const validateLeaveRequestAgainstPolicy = async ({
       WHERE e.id = $1
       LIMIT 1
     `,
-    [employeeId, leaveType]
+    [employeeId, balanceLeaveType]
   );
 
   if (!policyResult.rows.length) {
@@ -241,11 +253,11 @@ const validateLeaveRequestAgainstPolicy = async ({
 
   const policy = policyResult.rows[0];
   if (!policy.id) {
-    throw new Error(`Leave policy is not configured for type "${leaveType}"`);
+    throw new Error(`Leave policy is not configured for type "${balanceLeaveType}"`);
   }
 
   if (!policy.is_enabled) {
-    throw new Error(`Leave type "${leaveType}" is currently disabled`);
+    throw new Error(`Leave type "${balanceLeaveType}" is currently disabled`);
   }
 
   const requestedDays =
@@ -259,15 +271,15 @@ const validateLeaveRequestAgainstPolicy = async ({
       SELECT COALESCE(SUM(lr.end_date - lr.start_date + 1), 0)::int AS pending_days
       FROM leave_requests lr
       WHERE lr.employee_id = $1
-        AND lr.type = $2
+        AND lr.type = ANY($2::text[])
         AND lr.status = 'pending'
     `,
-    [employeeId, leaveType]
+    [employeeId, leaveTypesForBalance]
   );
 
   const pendingDays = Number(pendingResult.rows[0]?.pending_days || 0);
 
-  if (COMP_OFF_LEAVE_TYPES.includes(leaveType)) {
+  if (COMP_OFF_LEAVE_TYPES.includes(balanceLeaveType)) {
     const balanceResult = await pool.query(
       `
         SELECT COUNT(*) FILTER (
@@ -295,12 +307,17 @@ const validateLeaveRequestAgainstPolicy = async ({
     return;
   }
 
-  if (RULE_BASED_LEAVE_TYPES.includes(leaveType)) {
-    const sync = await syncEarnedLeaveBalanceForEmployee(employeeId,leaveType, new Date(startDate));
+  if (RULE_BASED_LEAVE_TYPES.includes(balanceLeaveType)) {
+    const sync = await syncEarnedLeaveBalanceForEmployee(employeeId,balanceLeaveType);
     const remainingBalance = Number(sync.balance || 0) - pendingDays;
 
     if (remainingBalance < requestedDays) {
-      throw new Error(`Insufficient ${leaveType} leave balance`);
+      throw new Error(
+        `Insufficient ${balanceLeaveType} leave balance. Available: ${Math.max(
+          remainingBalance,
+          0
+        )} day(s), Pending: ${pendingDays} day(s), Requested: ${requestedDays} day(s)`
+      );
     }
     return;
   }
@@ -316,18 +333,18 @@ const validateLeaveRequestAgainstPolicy = async ({
       ), 0)::numeric AS used_days
       FROM leave_requests lr
       WHERE lr.employee_id = $1
-        AND lr.type = $2
+        AND lr.type = ANY($2::text[])
         AND lr.status = 'approved'
         AND lr.start_date <= $4::date
         AND lr.end_date >= $3::date
     `,
-    [employeeId, leaveType, yearStart, yearEnd]
+    [employeeId, leaveTypesForBalance, yearStart, yearEnd]
   );
 
   const usedDays = Number(usageResult.rows[0]?.used_days || 0);
   const allowed = Number(policy.yearly_limit || 0);
   if (usedDays + pendingDays + requestedDays > allowed) {
-    throw new Error(`Yearly leave limit exceeded for type "${leaveType}"`);
+    throw new Error(`Yearly leave limit exceeded for type "${balanceLeaveType}"`);
   }
 };
 

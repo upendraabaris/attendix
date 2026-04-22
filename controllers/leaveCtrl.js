@@ -4,6 +4,91 @@ const { validateLeaveRequestAgainstPolicy } = require("../services/leavePolicySe
 const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
 const { getEmployeeLeaveBalances } = require("../services/leaveBalanceService");
 
+const SICK_LEAVE_PROOF_THRESHOLD_DAYS = 2;
+
+const getRequestedDays = (startDate, endDate) =>
+  Math.floor(
+    (new Date(endDate).getTime() - new Date(startDate).getTime()) /
+      (1000 * 60 * 60 * 24)
+  ) + 1;
+
+const buildAttachmentUrl = (req, attachmentPath) => {
+  if (!attachmentPath) {
+    return null;
+  }
+
+  return `${req.protocol}://${req.get("host")}${attachmentPath.replace(/\\/g, "/")}`;
+};
+
+const saveLeaveAttachment = async ({ leaveId, employeeId, file }) => {
+  if (!leaveId || !file) {
+    return null;
+  }
+
+  const storedPath = `/uploads/leave-proofs/${file.filename}`;
+  const result = await pool.query(
+    `
+      INSERT INTO leave_attachments (
+        leave_id,
+        employee_id,
+        file_name,
+        file_path,
+        mime_type,
+        file_size
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `,
+    [leaveId, employeeId, file.originalname, storedPath, file.mimetype, file.size]
+  );
+
+  return result.rows[0] || null;
+};
+
+const attachLeaveAttachments = async (req, rows = []) => {
+  if (!rows.length) {
+    return rows;
+  }
+
+  const leaveIds = rows
+    .map((row) => row.leave_id || row.id)
+    .filter(Boolean);
+
+  if (!leaveIds.length) {
+    return rows;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT leave_id, file_name, file_path, mime_type, file_size
+      FROM leave_attachments
+      WHERE leave_id = ANY($1::int[])
+      ORDER BY id DESC
+    `,
+    [leaveIds]
+  );
+
+  const attachmentMap = result.rows.reduce((acc, row) => {
+    if (!acc[row.leave_id]) {
+      acc[row.leave_id] = row;
+    }
+    return acc;
+  }, {});
+
+  return rows.map((row) => {
+    const leaveId = row.leave_id || row.id;
+    const attachment = attachmentMap[leaveId];
+
+    return {
+      ...row,
+      medical_proof_name: attachment?.file_name || null,
+      medical_proof_url: buildAttachmentUrl(req, attachment?.file_path || null),
+      medical_proof_mime_type: attachment?.mime_type || null,
+      medical_proof_size: attachment?.file_size || null,
+    };
+  });
+};
+
 const createLeaveRequest = async (req, res) => {
   const { type, startDate, endDate, reason } = req.body;
   const employeeId = req.user.employee_id;
@@ -25,6 +110,14 @@ const createLeaveRequest = async (req, res) => {
       });
     }
 
+    const requestedDays = getRequestedDays(startDate, endDate);
+    if (type === "sick" && requestedDays > SICK_LEAVE_PROOF_THRESHOLD_DAYS && !req.file) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Medical proof is required for sick leave longer than 2 consecutive days"
+      });
+    }
+
     await validateLeaveRequestAgainstPolicy({
       employeeId,
       leaveType: type,
@@ -34,9 +127,16 @@ const createLeaveRequest = async (req, res) => {
 
     // Call the PostgreSQL function to create leave request
     const result = await pool.query(
-      'SELECT * FROM create_leave_request($1, $2, $3, $4, $5)',
-      [employeeId, type, startDate, endDate, reason]
+      'SELECT * FROM create_leave_request($1, $2, $3, $4, $5, $6)',
+      [employeeId, type, startDate, endDate, reason, false]
     );
+    const createdLeave = result.rows[0] || null;
+    const leaveId = createdLeave?.leave_id || createdLeave?.id || null;
+    const attachment = await saveLeaveAttachment({
+      leaveId,
+      employeeId,
+      file: req.file,
+    });
 
     // Attempt to email the admin about the new leave request (non-blocking of API success)
     try {
@@ -102,7 +202,13 @@ const createLeaveRequest = async (req, res) => {
     res.status(201).json({
       statusCode: 201,
       message: 'Leave request submitted successfully',
-      data: result.rows[0]
+      data: {
+        ...createdLeave,
+        medical_proof_name: attachment?.file_name || null,
+        medical_proof_url: buildAttachmentUrl(req, attachment?.file_path || null),
+        medical_proof_mime_type: attachment?.mime_type || null,
+        medical_proof_size: attachment?.file_size || null,
+      }
     });
   } catch (error) {
     console.error('Error creating leave request:', error);
@@ -132,8 +238,9 @@ const getMyLeaveRequests = async (req, res) => {
       'SELECT * FROM get_employee_leave_requests($1)',
       [employeeId]
     );
+    const rowsWithAttachments = await attachLeaveAttachments(req, result.rows);
     // Format start_date and end_date in each row
-    const formattedRows = result.rows.map((row) => ({
+    const formattedRows = rowsWithAttachments.map((row) => ({
       ...row,
       start_date: new Date(row.start_date).toLocaleDateString('en-US', {
         year: 'numeric',
@@ -210,11 +317,12 @@ const getEmployeeLeaveRequests = async (req, res) => {
       'SELECT * FROM get_employee_leave_requests($1)',
       [employeeId]
     );
+    const rowsWithAttachments = await attachLeaveAttachments(req, result.rows);
 
     res.status(200).json({
       statusCode: 200,
       message: 'Leave requests retrieved successfully',
-      data: result.rows
+      data: rowsWithAttachments
     });
   } catch (error) {
     console.error('Error retrieving leave requests:', error);
@@ -242,7 +350,8 @@ const getAllLeaveRequests = async (req, res) => {
     );
     console.log(result)
 
-    const formattedDate = result.rows.map((row) => ({
+    const rowsWithAttachments = await attachLeaveAttachments(req, result.rows);
+    const formattedDate = rowsWithAttachments.map((row) => ({
       ...row,
       start_date: new Date(row.start_date).toLocaleDateString('en-US', {
         year: 'numeric',
@@ -280,13 +389,14 @@ const getPendingLeaveRequests = async (req, res) => {
   const orgID = req.user.organization_id;
   try {
     const result = await pool.query('SELECT * FROM get_pending_leave_requests($1)', [orgID]);
+    const rowsWithAttachments = await attachLeaveAttachments(req, result.rows);
 
     res.status(200).json({
       success: true, // ✅ Add this line
       statusCode: 200,
-      count: result.rows.length,
+      count: rowsWithAttachments.length,
       message: 'Pending leave requests retrieved successfully',
-      data: result.rows
+      data: rowsWithAttachments
     });
   } catch (error) {
     console.error('Error retrieving pending leave requests:', error);

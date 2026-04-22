@@ -10,13 +10,14 @@ const {
 } = require("../controllers/leaveCtrl");
 
 const { authenticate, authorizeRoles } = require("../middleware/authMiddleware");
+const { leaveUpload } = require("../middleware/leaveUpload");
 
 /**
  * @route POST /api/leave
  * @desc Submit a new leave request
  * @access Private (Employee)
  */
-router.post('/', authenticate, createLeaveRequest);
+router.post('/', authenticate, leaveUpload.single("medicalProof"), createLeaveRequest);
 
 /**
  * @route GET /api/leave/my

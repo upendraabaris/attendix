@@ -28,6 +28,7 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
     is_enabled: payload.is_enabled,
     earned_days_required: payload.earned_days_required,
     earned_leave_award: payload.earned_leave_award,
+    document_days_required: payload.document_days_required,
   };
 
   if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "leave_type")) {
@@ -81,19 +82,21 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
 };
 
 const upsertLeavePolicy = async (organizationId, payload) => {
+  console.log("Upserting leave policy with payload:", payload); // Debug log
   const data = validatePolicyInput(payload);
   const result = await pool.query(
     `
       INSERT INTO leave_policies (
-        organization_id, leave_type, yearly_limit, is_enabled, earned_days_required, earned_leave_award
+        organization_id, leave_type, yearly_limit, is_enabled, earned_days_required, earned_leave_award,document_days_required
       )
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       ON CONFLICT (organization_id, leave_type)
       DO UPDATE SET
         yearly_limit = EXCLUDED.yearly_limit,
         is_enabled = EXCLUDED.is_enabled,
         earned_days_required = EXCLUDED.earned_days_required,
-        earned_leave_award = EXCLUDED.earned_leave_award
+        earned_leave_award = EXCLUDED.earned_leave_award,
+        document_days_required = EXCLUDED.document_days_required
       RETURNING *
     `,
     [
@@ -103,6 +106,7 @@ const upsertLeavePolicy = async (organizationId, payload) => {
       data.is_enabled,
       data.earned_days_required ?? null,
       data.earned_leave_award ?? null,
+      data.document_days_required ?? null,
     ]
   );
 
@@ -163,6 +167,7 @@ const getLeavePoliciesByOrganization = async (organizationId) => {
         is_enabled,
         earned_days_required,
         earned_leave_award,
+        document_days_required,
         created_at
       FROM leave_policies
       WHERE organization_id = $1
@@ -206,7 +211,8 @@ const updateLeavePolicy = async (organizationId, policyId, payload) => {
         yearly_limit = $1,
         is_enabled = $2,
         earned_days_required = $3,
-        earned_leave_award = $4
+        earned_leave_award = $4,
+        document_days_required = $7
       WHERE id = $5
         AND organization_id = $6
       RETURNING *
@@ -218,6 +224,7 @@ const updateLeavePolicy = async (organizationId, policyId, payload) => {
       data.earned_leave_award ?? null,
       policyId,
       organizationId,
+      data.document_days_required ?? null,
     ]
   );
 

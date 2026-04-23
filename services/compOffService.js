@@ -9,6 +9,25 @@ const WORK_WEEK_POLICIES = {
 
 const DEFAULT_EXPIRY_DAYS = 30;
 
+const getCompOffExpiryLimit = async (organizationId) => {
+  if (!organizationId) {
+    return DEFAULT_EXPIRY_DAYS;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT expire_limit
+      FROM leave_policies
+      WHERE organization_id = $1
+        AND leave_type = 'compensation'
+      LIMIT 1
+    `,
+    [organizationId]
+  );
+
+  return Number(result.rows[0]?.expire_limit || DEFAULT_EXPIRY_DAYS);
+};
+
 const isValidDateInput = (value) => value && !Number.isNaN(new Date(value).getTime());
 
 const normalizeDateOnlyInput = (value) => {
@@ -402,11 +421,16 @@ const earnCompOff = async ({
   employeeId,
   organizationId,
   workDate,
-  expiryDays = DEFAULT_EXPIRY_DAYS,
+  expiryDays,
 }) => {
   if (!workDate || Number.isNaN(new Date(workDate).getTime())) {
     throw new Error("Valid work_date is required");
   }
+
+  const resolvedExpiryDays =
+    expiryDays === undefined || expiryDays === null
+      ? await getCompOffExpiryLimit(organizationId)
+      : Number(expiryDays || DEFAULT_EXPIRY_DAYS);
 
   const evaluation = await evaluateCompOffEligibility({
     employeeId,
@@ -437,7 +461,7 @@ const earnCompOff = async ({
       DO NOTHING
       RETURNING *
     `,
-    [employeeId, workDate, evaluation.reason, buildExpiryDate(workDate, expiryDays)]
+    [employeeId, workDate, evaluation.reason, buildExpiryDate(workDate, resolvedExpiryDays)]
   );
 
   if (!result.rows.length) {

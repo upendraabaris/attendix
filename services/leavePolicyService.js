@@ -29,6 +29,8 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
     earned_days_required: payload.earned_days_required,
     earned_leave_award: payload.earned_leave_award,
     document_days_required: payload.document_days_required,
+    max_consecutive_days: payload.max_consecutive_days,
+    expire_limit: payload.expire_limit,
   };
 
   if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "leave_type")) {
@@ -48,6 +50,29 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
   if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "is_enabled")) {
     normalized.is_enabled =
       typeof normalized.is_enabled === "boolean" ? normalized.is_enabled : true;
+  }
+
+  if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "max_consecutive_days")) {
+    if (
+      normalized.max_consecutive_days !== undefined &&
+      normalized.max_consecutive_days !== null
+    ) {
+      const maxDays = Number(normalized.max_consecutive_days);
+      if (Number.isNaN(maxDays) || maxDays <= 0) {
+        throw new Error("max_consecutive_days must be a positive number");
+      }
+      normalized.max_consecutive_days = maxDays;
+    }
+  }
+
+  if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "expire_limit")) {
+    if (normalized.expire_limit !== undefined && normalized.expire_limit !== null) {
+      const expireLimit = Number(normalized.expire_limit);
+      if (Number.isNaN(expireLimit) || expireLimit <= 0) {
+        throw new Error("expire_limit must be a positive number");
+      }
+      normalized.expire_limit = expireLimit;
+    }
   }
 
   const leaveType = normalized.leave_type;
@@ -78,6 +103,14 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
     normalized.earned_leave_award = null;
   }
 
+  if (leaveType !== "casual") {
+    normalized.max_consecutive_days = null;
+  }
+
+  if (leaveType !== "compensation") {
+    normalized.expire_limit = null;
+  }
+
   return normalized;
 };
 
@@ -87,16 +120,18 @@ const upsertLeavePolicy = async (organizationId, payload) => {
   const result = await pool.query(
     `
       INSERT INTO leave_policies (
-        organization_id, leave_type, yearly_limit, is_enabled, earned_days_required, earned_leave_award,document_days_required
+        organization_id, leave_type, yearly_limit, is_enabled, earned_days_required, earned_leave_award, document_days_required, max_consecutive_days, expire_limit
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (organization_id, leave_type)
       DO UPDATE SET
         yearly_limit = EXCLUDED.yearly_limit,
         is_enabled = EXCLUDED.is_enabled,
         earned_days_required = EXCLUDED.earned_days_required,
         earned_leave_award = EXCLUDED.earned_leave_award,
-        document_days_required = EXCLUDED.document_days_required
+        document_days_required = EXCLUDED.document_days_required,
+        max_consecutive_days = EXCLUDED.max_consecutive_days,
+        expire_limit = EXCLUDED.expire_limit
       RETURNING *
     `,
     [
@@ -107,6 +142,8 @@ const upsertLeavePolicy = async (organizationId, payload) => {
       data.earned_days_required ?? null,
       data.earned_leave_award ?? null,
       data.document_days_required ?? null,
+      data.max_consecutive_days ?? null,
+      data.expire_limit ?? null,
     ]
   );
 
@@ -168,6 +205,8 @@ const getLeavePoliciesByOrganization = async (organizationId) => {
         earned_days_required,
         earned_leave_award,
         document_days_required,
+        max_consecutive_days,
+        expire_limit,
         created_at
       FROM leave_policies
       WHERE organization_id = $1
@@ -212,7 +251,9 @@ const updateLeavePolicy = async (organizationId, policyId, payload) => {
         is_enabled = $2,
         earned_days_required = $3,
         earned_leave_award = $4,
-        document_days_required = $7
+        document_days_required = $7,
+        max_consecutive_days = $8,
+        expire_limit = $9
       WHERE id = $5
         AND organization_id = $6
       RETURNING *
@@ -225,6 +266,8 @@ const updateLeavePolicy = async (organizationId, policyId, payload) => {
       policyId,
       organizationId,
       data.document_days_required ?? null,
+      data.max_consecutive_days ?? null,
+      data.expire_limit ?? null,
     ]
   );
 
@@ -285,6 +328,15 @@ const validateLeaveRequestAgainstPolicy = async ({
   );
 
   const pendingDays = Number(pendingResult.rows[0]?.pending_days || 0);
+
+  if (
+    policy.max_consecutive_days &&
+    requestedDays > Number(policy.max_consecutive_days)
+  ) {
+    throw new Error(
+      `Maximum ${policy.max_consecutive_days} consecutive day(s) allowed for type "${balanceLeaveType}"`
+    );
+  }
 
   if (COMP_OFF_LEAVE_TYPES.includes(balanceLeaveType)) {
     const balanceResult = await pool.query(

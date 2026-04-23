@@ -1,7 +1,7 @@
 const pool = require("../configure/dbConfig");
 const { syncEarnedLeaveBalanceForEmployee } = require("./leaveBalanceService");
 
-const SUPPORTED_LEAVE_TYPES = ["sick", "personal", "other", "earned","casual","compensation"];
+const SUPPORTED_LEAVE_TYPES = ["sick", "personal", "other", "earned","casual","compensation","paternity"];
 const COMP_OFF_LEAVE_TYPES = ["compensation", "comp_off"];
 const RULE_BASED_LEAVE_TYPES = ["earned", "casual"];
 const LEAVE_BALANCE_TYPE_ALIASES = {
@@ -15,7 +15,7 @@ const getLeaveTypesForBalance = (leaveType) => {
 };
 
 const orderedPolicies = (rows = []) => {
-  const order = ["sick", "vacation", "personal", "other", "earned"];
+  const order = ["sick", "vacation", "personal", "other", "earned","paternity"];
   return rows.sort(
     (a, b) => order.indexOf(a.leave_type) - order.indexOf(b.leave_type)
   );
@@ -33,7 +33,7 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
 
   if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "leave_type")) {
     if (!normalized.leave_type || !SUPPORTED_LEAVE_TYPES.includes(normalized.leave_type)) {
-      throw new Error("Invalid leave_type. Allowed: sick, personal, other, earned, casual, compensation");
+      throw new Error("Invalid leave_type. Allowed: sick, personal, other, earned, casual, compensation","paternity");
     }
   }
 

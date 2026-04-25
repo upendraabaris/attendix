@@ -4,13 +4,28 @@ const { validateLeaveRequestAgainstPolicy } = require("../services/leavePolicySe
 const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
 const { getEmployeeLeaveBalances } = require("../services/leaveBalanceService");
 
-const SICK_LEAVE_PROOF_THRESHOLD_DAYS = 2;
-
 const getRequestedDays = (startDate, endDate) =>
   Math.floor(
     (new Date(endDate).getTime() - new Date(startDate).getTime()) /
       (1000 * 60 * 60 * 24)
   ) + 1;
+
+const getSickDocumentDaysRequired = async (employeeId) => {
+  const result = await pool.query(
+    `
+      SELECT lp.document_days_required
+      FROM employees e
+      LEFT JOIN leave_policies lp
+        ON lp.organization_id = e.organization_id
+       AND lp.leave_type = 'sick'
+      WHERE e.id = $1
+      LIMIT 1
+    `,
+    [employeeId]
+  );
+
+  return Number(result.rows[0]?.document_days_required ?? 0);
+};
 
 const buildAttachmentUrl = (req, attachmentPath) => {
   if (!attachmentPath) {
@@ -111,10 +126,13 @@ const createLeaveRequest = async (req, res) => {
     }
 
     const requestedDays = getRequestedDays(startDate, endDate);
-    if (type === "sick" && requestedDays > SICK_LEAVE_PROOF_THRESHOLD_DAYS && !req.file) {
+    const sickDocumentDaysRequired =
+      type === "sick" ? await getSickDocumentDaysRequired(employeeId) : 0;
+
+    if (type === "sick" && sickDocumentDaysRequired > 0 && requestedDays > sickDocumentDaysRequired && !req.file) {
       return res.status(400).json({
         statusCode: 400,
-        message: "Medical proof is required for sick leave longer than 2 consecutive days"
+        message: `Medical proof is required for sick leave longer than ${sickDocumentDaysRequired} consecutive day${sickDocumentDaysRequired > 1 ? "s" : ""}`
       });
     }
 

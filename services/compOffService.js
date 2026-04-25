@@ -504,30 +504,48 @@ const getCompOffBalance = async (employeeId, organizationId) => {
     throw new Error("Employee does not belong to the current organization");
   }
 
-  const result = await pool.query(
-    `
-      SELECT
-        COUNT(*) FILTER (
-          WHERE comp_leave_used = false
-            AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
-        )::int AS available_balance,
-        COUNT(*) FILTER (WHERE comp_leave_used = true)::int AS used_count,
-        COUNT(*) FILTER (
-          WHERE comp_leave_used = false
-            AND expiry_date IS NOT NULL
-            AND expiry_date < CURRENT_DATE
-        )::int AS expired_count,
-        COUNT(*)::int AS total_earned
-      FROM compensation_earned
-      WHERE employee_id = $1
-    `,
-    [employeeId]
-  );
+  const [balanceResult, pendingResult] = await Promise.all([
+    pool.query(
+      `
+        SELECT
+          COUNT(*) FILTER (
+            WHERE comp_leave_used = false
+              AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
+          )::int AS available_balance,
+          COUNT(*) FILTER (WHERE comp_leave_used = true)::int AS used_count,
+          COUNT(*) FILTER (
+            WHERE comp_leave_used = false
+              AND expiry_date IS NOT NULL
+              AND expiry_date < CURRENT_DATE
+          )::int AS expired_count,
+          COUNT(*)::int AS total_earned
+        FROM compensation_earned
+        WHERE employee_id = $1
+      `,
+      [employeeId]
+    ),
+    pool.query(
+      `
+        SELECT COALESCE(SUM(lr.end_date - lr.start_date + 1), 0)::int AS pending_days
+        FROM leave_requests lr
+        WHERE lr.employee_id = $1
+          AND lr.type = 'compensation'
+          AND lr.status = 'pending'
+      `,
+      [employeeId]
+    ),
+  ]);
+
+  const balanceRow = balanceResult.rows[0] || {};
+  const pendingDays = Number(pendingResult.rows[0]?.pending_days || 0);
+  const availableBalance = Math.max(Number(balanceRow.available_balance || 0) - pendingDays, 0);
 
   return {
     employee_id: employeeId,
     employee_name: employee.name,
-    ...result.rows[0],
+    ...balanceRow,
+    available_balance: availableBalance,
+    pending_days: pendingDays,
   };
 };
 

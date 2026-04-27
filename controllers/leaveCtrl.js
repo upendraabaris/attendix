@@ -105,7 +105,8 @@ const attachLeaveAttachments = async (req, rows = []) => {
 };
 
 const createLeaveRequest = async (req, res) => {
-  const { type, startDate, endDate, reason } = req.body;
+  const { type, startDate, endDate, reason, is_half_day } = req.body;
+  const isHalfDay = is_half_day === true || is_half_day === 'true';
   const employeeId = req.user.employee_id;
   const organizationId = req.user.organization_id;
 
@@ -140,7 +141,8 @@ const createLeaveRequest = async (req, res) => {
       employeeId,
       leaveType: type,
       startDate,
-      endDate
+      endDate,
+      isHalfDay
     });
 
     // Call the PostgreSQL function to create leave request

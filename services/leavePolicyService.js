@@ -318,7 +318,9 @@ const validateLeaveRequestAgainstPolicy = async ({
   const usageResult = await pool.query(
     `
       SELECT COALESCE(SUM(
-        LEAST(lr.end_date, $4::date) - GREATEST(lr.start_date, $3::date) + 1
+        CASE WHEN lr.is_half_day THEN 0.5
+             ELSE (LEAST(lr.end_date, $4::date) - GREATEST(lr.start_date, $3::date) + 1)::numeric
+        END
       ), 0)::numeric AS used_days
       FROM leave_requests lr
       WHERE lr.employee_id = $1

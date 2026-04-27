@@ -9,6 +9,25 @@ const WORK_WEEK_POLICIES = {
 
 const DEFAULT_EXPIRY_DAYS = 30;
 
+const getCompOffExpiryLimit = async (organizationId) => {
+  if (!organizationId) {
+    return DEFAULT_EXPIRY_DAYS;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT expire_limit
+      FROM leave_policies
+      WHERE organization_id = $1
+        AND leave_type = 'compensation'
+      LIMIT 1
+    `,
+    [organizationId]
+  );
+
+  return Number(result.rows[0]?.expire_limit || DEFAULT_EXPIRY_DAYS);
+};
+
 const isValidDateInput = (value) => value && !Number.isNaN(new Date(value).getTime());
 
 const normalizeDateOnlyInput = (value) => {
@@ -402,11 +421,16 @@ const earnCompOff = async ({
   employeeId,
   organizationId,
   workDate,
-  expiryDays = DEFAULT_EXPIRY_DAYS,
+  expiryDays,
 }) => {
   if (!workDate || Number.isNaN(new Date(workDate).getTime())) {
     throw new Error("Valid work_date is required");
   }
+
+  const resolvedExpiryDays =
+    expiryDays === undefined || expiryDays === null
+      ? await getCompOffExpiryLimit(organizationId)
+      : Number(expiryDays || DEFAULT_EXPIRY_DAYS);
 
   const evaluation = await evaluateCompOffEligibility({
     employeeId,
@@ -437,7 +461,7 @@ const earnCompOff = async ({
       DO NOTHING
       RETURNING *
     `,
-    [employeeId, workDate, evaluation.reason, buildExpiryDate(workDate, expiryDays)]
+    [employeeId, workDate, evaluation.reason, buildExpiryDate(workDate, resolvedExpiryDays)]
   );
 
   if (!result.rows.length) {
@@ -480,30 +504,48 @@ const getCompOffBalance = async (employeeId, organizationId) => {
     throw new Error("Employee does not belong to the current organization");
   }
 
-  const result = await pool.query(
-    `
-      SELECT
-        COUNT(*) FILTER (
-          WHERE comp_leave_used = false
-            AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
-        )::int AS available_balance,
-        COUNT(*) FILTER (WHERE comp_leave_used = true)::int AS used_count,
-        COUNT(*) FILTER (
-          WHERE comp_leave_used = false
-            AND expiry_date IS NOT NULL
-            AND expiry_date < CURRENT_DATE
-        )::int AS expired_count,
-        COUNT(*)::int AS total_earned
-      FROM compensation_earned
-      WHERE employee_id = $1
-    `,
-    [employeeId]
-  );
+  const [balanceResult, pendingResult] = await Promise.all([
+    pool.query(
+      `
+        SELECT
+          COUNT(*) FILTER (
+            WHERE comp_leave_used = false
+              AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
+          )::int AS available_balance,
+          COUNT(*) FILTER (WHERE comp_leave_used = true)::int AS used_count,
+          COUNT(*) FILTER (
+            WHERE comp_leave_used = false
+              AND expiry_date IS NOT NULL
+              AND expiry_date < CURRENT_DATE
+          )::int AS expired_count,
+          COUNT(*)::int AS total_earned
+        FROM compensation_earned
+        WHERE employee_id = $1
+      `,
+      [employeeId]
+    ),
+    pool.query(
+      `
+        SELECT COALESCE(SUM(lr.end_date - lr.start_date + 1), 0)::int AS pending_days
+        FROM leave_requests lr
+        WHERE lr.employee_id = $1
+          AND lr.type = 'compensation'
+          AND lr.status = 'pending'
+      `,
+      [employeeId]
+    ),
+  ]);
+
+  const balanceRow = balanceResult.rows[0] || {};
+  const pendingDays = Number(pendingResult.rows[0]?.pending_days || 0);
+  const availableBalance = Math.max(Number(balanceRow.available_balance || 0) - pendingDays, 0);
 
   return {
     employee_id: employeeId,
     employee_name: employee.name,
-    ...result.rows[0],
+    ...balanceRow,
+    available_balance: availableBalance,
+    pending_days: pendingDays,
   };
 };
 

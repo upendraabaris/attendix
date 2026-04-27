@@ -6,11 +6,45 @@ const getEmployeeLeaveBalances = async (employeeId) => {
       SELECT id, employee_id, leave_type, used_days, balance, updated_at
       FROM employee_leave_balance
       WHERE employee_id = $1
+        AND leave_type <> 'vacation'
       ORDER BY leave_type
     `,
     [employeeId]
   );
-  return result.rows;
+
+  const balances = await Promise.all(
+    result.rows.map(async (row) => {
+      const pendingDays = await getPendingLeaveDays(employeeId, row.leave_type);
+      const grossBalance = Number(row.balance || 0);
+
+      return {
+        ...row,
+        accrued_balance: grossBalance,
+        pending_days: pendingDays,
+        balance: Math.max(grossBalance - pendingDays, 0),
+      };
+    })
+  );
+
+  return balances;
+};
+
+const getLeaveTypesForBalance = (leaveType) =>
+  leaveType === "earned" ? ["earned", "vacation"] : [leaveType];
+
+const getPendingLeaveDays = async (employeeId, leaveType) => {
+  const result = await pool.query(
+    `
+      SELECT COALESCE(SUM(lr.end_date - lr.start_date + 1), 0)::numeric AS pending_days
+      FROM leave_requests lr
+      WHERE lr.employee_id = $1
+        AND lr.type = ANY($2::text[])
+        AND lr.status = 'pending'
+    `,
+    [employeeId, getLeaveTypesForBalance(leaveType)]
+  );
+
+  return Number(result.rows[0]?.pending_days || 0);
 };
 
 const getEmployeeLeaveBalanceByType = async (employeeId, leaveType) => {
@@ -54,6 +88,38 @@ const getYearBounds = (year) => ({
   end: `${year}-12-31`,
 });
 
+const EARNED_LEAVE_ANNUAL_LIMIT = 12;
+const EARNED_LEAVE_CARRY_FORWARD_LIMIT = 24;
+
+const getCompletedAccrualMonths = (date, joinedAt) => {
+  const accrualDate = new Date(date);
+  const yearStart = new Date(Date.UTC(accrualDate.getUTCFullYear(), 0, 1));
+  const joinDate = joinedAt ? new Date(joinedAt) : yearStart;
+
+  if (Number.isNaN(joinDate.getTime())) {
+    return Math.max(accrualDate.getUTCMonth(), 0);
+  }
+
+  const accrualYear = accrualDate.getUTCFullYear();
+  const accrualStart = joinDate.getUTCFullYear() === accrualYear && joinDate > yearStart
+    ? joinDate
+    : yearStart;
+
+  if (accrualStart > accrualDate) {
+    return 0;
+  }
+
+  let completedMonths =
+    (accrualDate.getUTCFullYear() - accrualStart.getUTCFullYear()) * 12 +
+    (accrualDate.getUTCMonth() - accrualStart.getUTCMonth());
+
+  if (accrualDate.getUTCDate() < accrualStart.getUTCDate()) {
+    completedMonths -= 1;
+  }
+
+  return Math.max(completedMonths, 0);
+};
+
 const getPresentWorkingDays = async (employeeId, year) => {
   const { start, end } = getYearBounds(year);
 
@@ -77,8 +143,10 @@ const getEarnedPolicyForEmployee = async (employeeId,type) => {
         lp.organization_id,
         lp.leave_type,
         lp.is_enabled,
+        lp.yearly_limit,
         lp.earned_days_required,
-        lp.earned_leave_award
+        lp.earned_leave_award,
+        e.created_at AS employee_created_at
       FROM employees e
       JOIN leave_policies lp
         ON lp.organization_id = e.organization_id
@@ -94,6 +162,7 @@ const getEarnedPolicyForEmployee = async (employeeId,type) => {
 
 const getConsumedEarnedLeaveDays = async (employeeId, year,type) => {
   const { start, end } = getYearBounds(year);
+  const consumedTypes = type === "earned" ? ["earned", "vacation"] : [type];
   const result = await pool.query(
     `
       SELECT COALESCE(SUM(
@@ -103,12 +172,12 @@ const getConsumedEarnedLeaveDays = async (employeeId, year,type) => {
       ), 0)::numeric AS consumed_days
       FROM leave_requests lr
       WHERE lr.employee_id = $1
-        AND lr.type = $4
+        AND lr.type = ANY($4::text[])
         AND lr.status = 'approved'
         AND lr.start_date <= $3::date
         AND lr.end_date >= $2::date
     `,
-    [employeeId, start, end, type]
+    [employeeId, start, end, consumedTypes]
   );
 
   return Number(result.rows[0]?.consumed_days || 0);
@@ -131,13 +200,28 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId,type = 'earned', dat
     };
   }
 
-  const presentDays = await getPresentWorkingDays(employeeId, year);
   const consumedEarnedDays = await getConsumedEarnedLeaveDays(employeeId, year,type);
 
-  const totalEarnedCredits =
-    Math.floor(presentDays / Number(policy.earned_days_required)) *
-    Number(policy.earned_leave_award);
-  const availableBalance = Math.max(totalEarnedCredits - consumedEarnedDays, 0);
+  let presentDays = null;
+  let totalEarnedCredits = 0;
+  let availableBalance = 0;
+
+  if (type === "earned") {
+    const annualLimit = Number(policy.yearly_limit || EARNED_LEAVE_ANNUAL_LIMIT);
+    const monthlyAward = Number(policy.earned_leave_award);
+    const accruedMonths = getCompletedAccrualMonths(date, policy.employee_created_at);
+    totalEarnedCredits = Math.min(accruedMonths * monthlyAward, annualLimit);
+    availableBalance = Math.min(
+      Math.max(totalEarnedCredits - consumedEarnedDays, 0),
+      EARNED_LEAVE_CARRY_FORWARD_LIMIT
+    );
+  } else {
+    presentDays = await getPresentWorkingDays(employeeId, year);
+    totalEarnedCredits =
+      Math.floor(presentDays / Number(policy.earned_days_required)) *
+      Number(policy.earned_leave_award);
+    availableBalance = Math.max(totalEarnedCredits - consumedEarnedDays, 0);
+  }
 
   const upserted = await upsertEmployeeLeaveBalance({
     employeeId,

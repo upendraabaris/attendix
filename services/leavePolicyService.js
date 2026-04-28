@@ -1,7 +1,7 @@
 const pool = require("../configure/dbConfig");
 const { syncEarnedLeaveBalanceForEmployee } = require("./leaveBalanceService");
 
-const SUPPORTED_LEAVE_TYPES = ["sick", "personal", "other", "earned","casual","compensation","paternity"];
+const SUPPORTED_LEAVE_TYPES = ["sick", "personal", "other", "earned", "casual", "compensation", "paternity", "vacation"];
 const COMP_OFF_LEAVE_TYPES = ["compensation", "comp_off"];
 const RULE_BASED_LEAVE_TYPES = ["earned", "casual"];
 const LEAVE_BALANCE_TYPE_ALIASES = {
@@ -15,7 +15,7 @@ const getLeaveTypesForBalance = (leaveType) => {
 };
 
 const orderedPolicies = (rows = []) => {
-  const order = ["sick", "vacation", "personal", "other", "earned","paternity"];
+  const order = ["sick", "vacation", "personal", "other", "earned", "paternity"];
   return rows.sort(
     (a, b) => order.indexOf(a.leave_type) - order.indexOf(b.leave_type)
   );
@@ -35,7 +35,7 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
 
   if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "leave_type")) {
     if (!normalized.leave_type || !SUPPORTED_LEAVE_TYPES.includes(normalized.leave_type)) {
-      throw new Error("Invalid leave_type. Allowed: sick, personal, other, earned, casual, compensation","paternity");
+      throw new Error("Invalid leave_type. Allowed: sick, personal, other, earned, casual, compensation", "paternity", "vacation");
     }
   }
 
@@ -210,7 +210,6 @@ const getLeavePoliciesByOrganization = async (organizationId) => {
         created_at
       FROM leave_policies
       WHERE organization_id = $1
-        AND leave_type <> 'vacation'
       ORDER BY id
     `,
     [organizationId]
@@ -313,7 +312,7 @@ const validateLeaveRequestAgainstPolicy = async ({
   const requestedDays =
     Math.floor(
       (new Date(endDate).getTime() - new Date(startDate).getTime()) /
-        (1000 * 60 * 60 * 24)
+      (1000 * 60 * 60 * 24)
     ) + 1;
 
   const pendingResult = await pool.query(
@@ -367,7 +366,7 @@ const validateLeaveRequestAgainstPolicy = async ({
   }
 
   if (RULE_BASED_LEAVE_TYPES.includes(balanceLeaveType)) {
-    const sync = await syncEarnedLeaveBalanceForEmployee(employeeId,balanceLeaveType);
+    const sync = await syncEarnedLeaveBalanceForEmployee(employeeId, balanceLeaveType);
     const remainingBalance = Number(sync.balance || 0) - pendingDays;
 
     if (remainingBalance < requestedDays) {

@@ -3,11 +3,12 @@ const { sendNewLeaveRequestEmail, sendLeaveStatusEmail } = require("../services/
 const { validateLeaveRequestAgainstPolicy } = require("../services/leavePolicyService");
 const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
 const { getEmployeeLeaveBalances } = require("../services/leaveBalanceService");
+const { uploadToS3 } = require("../services/s3Uploader");
 
 const getRequestedDays = (startDate, endDate) =>
   Math.floor(
     (new Date(endDate).getTime() - new Date(startDate).getTime()) /
-      (1000 * 60 * 60 * 24)
+    (1000 * 60 * 60 * 24)
   ) + 1;
 
 const getSickDocumentDaysRequired = async (employeeId) => {
@@ -32,6 +33,11 @@ const buildAttachmentUrl = (req, attachmentPath) => {
     return null;
   }
 
+  // If it's already a full S3 URL, return it as is
+  if (attachmentPath.startsWith("http")) {
+    return attachmentPath;
+  }
+
   return `${req.protocol}://${req.get("host")}${attachmentPath.replace(/\\/g, "/")}`;
 };
 
@@ -40,7 +46,9 @@ const saveLeaveAttachment = async ({ leaveId, employeeId, file }) => {
     return null;
   }
 
-  const storedPath = `/uploads/leave-proofs/${file.filename}`;
+  // Upload file to AWS S3
+  const s3Url = await uploadToS3(file);
+
   const result = await pool.query(
     `
       INSERT INTO leave_attachments (
@@ -54,7 +62,7 @@ const saveLeaveAttachment = async ({ leaveId, employeeId, file }) => {
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
     `,
-    [leaveId, employeeId, file.originalname, storedPath, file.mimetype, file.size]
+    [leaveId, employeeId, file.originalname, s3Url, file.mimetype, file.size]
   );
 
   return result.rows[0] || null;

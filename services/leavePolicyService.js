@@ -278,6 +278,7 @@ const validateLeaveRequestAgainstPolicy = async ({
   leaveType,
   startDate,
   endDate,
+  isHalfDay = false,
 }) => {
   const balanceLeaveType = getBalanceLeaveType(leaveType);
   const leaveTypesForBalance = getLeaveTypesForBalance(leaveType);
@@ -309,15 +310,20 @@ const validateLeaveRequestAgainstPolicy = async ({
     throw new Error(`Leave type "${balanceLeaveType}" is currently disabled`);
   }
 
-  const requestedDays =
-    Math.floor(
-      (new Date(endDate).getTime() - new Date(startDate).getTime()) /
-      (1000 * 60 * 60 * 24)
-    ) + 1;
+  const requestedDays = isHalfDay
+    ? 0.5
+    : Math.floor(
+        (new Date(endDate).getTime() - new Date(startDate).getTime()) /
+          (1000 * 60 * 60 * 24)
+      ) + 1;
 
   const pendingResult = await pool.query(
     `
-      SELECT COALESCE(SUM(lr.end_date - lr.start_date + 1), 0)::int AS pending_days
+      SELECT COALESCE(SUM(
+        CASE WHEN lr.is_half_day THEN 0.5
+             ELSE (lr.end_date - lr.start_date + 1)::numeric
+        END
+      ), 0)::numeric AS pending_days
       FROM leave_requests lr
       WHERE lr.employee_id = $1
         AND lr.type = ANY($2::text[])
@@ -387,7 +393,9 @@ const validateLeaveRequestAgainstPolicy = async ({
   const usageResult = await pool.query(
     `
       SELECT COALESCE(SUM(
-        LEAST(lr.end_date, $4::date) - GREATEST(lr.start_date, $3::date) + 1
+        CASE WHEN lr.is_half_day THEN 0.5
+             ELSE (LEAST(lr.end_date, $4::date) - GREATEST(lr.start_date, $3::date) + 1)::numeric
+        END
       ), 0)::numeric AS used_days
       FROM leave_requests lr
       WHERE lr.employee_id = $1

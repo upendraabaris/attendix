@@ -5,16 +5,7 @@ const multer = require("multer");
 const uploadRoot = path.join(__dirname, "..", "uploads", "leave-proofs");
 fs.mkdirSync(uploadRoot, { recursive: true });
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadRoot);
-  },
-  filename: (req, file, cb) => {
-    const employeeId = req.user?.employee_id || "employee";
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
-    cb(null, `${employeeId}-${Date.now()}-${safeName}`);
-  },
-});
+const storage = multer.memoryStorage();
 
 const allowedMimeTypes = new Set([
   "application/pdf",

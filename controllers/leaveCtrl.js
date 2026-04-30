@@ -156,7 +156,7 @@ const createLeaveRequest = async (req, res) => {
     // Call the PostgreSQL function to create leave request
     const result = await pool.query(
       'SELECT * FROM create_leave_request($1, $2, $3, $4, $5, $6)',
-      [employeeId, type, startDate, endDate, reason, false]
+      [employeeId, type, startDate, endDate, reason, isHalfDay]
     );
     const createdLeave = result.rows[0] || null;
     const leaveId = createdLeave?.leave_id || createdLeave?.id || null;

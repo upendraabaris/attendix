@@ -91,6 +91,15 @@ const attachLeaveAttachments = async (req, rows = []) => {
     [leaveIds]
   );
 
+  const leaveResult = await pool.query(
+    `
+      SELECT id, is_half_day
+      FROM leave_requests
+      WHERE id = ANY($1::int[])
+    `,
+    [leaveIds]
+  );
+
   const attachmentMap = result.rows.reduce((acc, row) => {
     if (!acc[row.leave_id]) {
       acc[row.leave_id] = row;
@@ -98,12 +107,25 @@ const attachLeaveAttachments = async (req, rows = []) => {
     return acc;
   }, {});
 
+  const leaveMetaMap = leaveResult.rows.reduce((acc, row) => {
+    acc[row.id] = {
+      is_half_day: row.is_half_day === true,
+    };
+    return acc;
+  }, {});
+
   return rows.map((row) => {
     const leaveId = row.leave_id || row.id;
     const attachment = attachmentMap[leaveId];
+    const leaveMeta = leaveMetaMap[leaveId];
 
     return {
       ...row,
+      is_half_day:
+        row.is_half_day === true ||
+        row.is_half_day === "true" ||
+        row.is_half_day === "t" ||
+        leaveMeta?.is_half_day === true,
       medical_proof_name: attachment?.file_name || null,
       medical_proof_url: buildAttachmentUrl(req, attachment?.file_path || null),
       medical_proof_mime_type: attachment?.mime_type || null,
@@ -156,7 +178,7 @@ const createLeaveRequest = async (req, res) => {
     // Call the PostgreSQL function to create leave request
     const result = await pool.query(
       'SELECT * FROM create_leave_request($1, $2, $3, $4, $5, $6)',
-      [employeeId, type, startDate, endDate, reason, false]
+      [employeeId, type, startDate, endDate, reason, isHalfDay]
     );
     const createdLeave = result.rows[0] || null;
     const leaveId = createdLeave?.leave_id || createdLeave?.id || null;

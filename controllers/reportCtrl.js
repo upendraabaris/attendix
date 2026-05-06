@@ -138,13 +138,35 @@ const generateAttendanceReport = async (req, res) => {
         });
 
         // 6. Build Employee Breakdown
+        // const employeeRows = employees.map(emp => {
+        //     const presentDaysCount = attendanceMap[emp.id] ? attendanceMap[emp.id].size : 0;
+        //     const leaveDaysCount = leavesMap[emp.id] || 0;
+
+        // 6. Build Employee Breakdown
         const employeeRows = employees.map(emp => {
-            const presentDaysCount = attendanceMap[emp.id] ? attendanceMap[emp.id].size : 0;
+            const attendanceSet = attendanceMap[emp.id] || new Set();
+            const presentDaysCount = attendanceSet.size;
             const leaveDaysCount = leavesMap[emp.id] || 0;
+
+            // --- Naya Logic Start ---
+            let nonWorkingDaysWorkedCount = 0;
+
+            attendanceSet.forEach(dateStr => {
+                const isHoliday = holidayDates.has(dateStr);
+                const isWeekend = isWeekendByPolicy(new Date(dateStr), policy);
+
+                // Agar chhutti thi ya weekend tha, aur attendanceSet mein hai, matlab kaam kiya hai
+                if (isHoliday || isWeekend) {
+                    nonWorkingDaysWorkedCount++;
+                }
+            });
+            // --- Naya Logic End ---
 
             return {
                 name: emp.name,
-                workingDays: presentDaysCount,
+                totalWorkingDays: totalWorkingDays,
+                actualWorkingDays: presentDaysCount - nonWorkingDaysWorkedCount,
+                nonWorkingDaysWorked: nonWorkingDaysWorkedCount, // <--- Naya field add kiya
                 leaves: leaveDaysCount,
                 holidays: totalHolidays
             };

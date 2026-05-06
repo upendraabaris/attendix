@@ -18,10 +18,10 @@ function createTransporter() {
 
 async function sendMail(options) {
   const transporter = createTransporter();
-    const info = await transporter.sendMail(options);
+  const info = await transporter.sendMail(options);
 
- // return transporter.sendMail(options);
- console.log("📨 Email sent:", info.messageId);
+  // return transporter.sendMail(options);
+  console.log("📨 Email sent:", info.messageId);
   console.log("🔗 Preview URL:", nodemailer.getTestMessageUrl(info));
 
   return info;
@@ -29,7 +29,7 @@ async function sendMail(options) {
 
 function buildLeaveEmail({ adminEmail, organizationName, employeeName, leave }) {
 
-   // Format date as DD-MM-YYYY
+  // Format date as DD-MM-YYYY
   const formatDate = (dateStr) => {
     if (!dateStr) return "";
     const d = new Date(dateStr);
@@ -84,7 +84,7 @@ function buildLeaveStatusEmail({ employeeEmail, employeeName, organizationName, 
   const formattedEnd = formatDate(leave.endDate);
   const statusText = status === 'approved' ? 'Approved' : 'Rejected';
   const statusColor = status === 'approved' ? '#28a745' : '#dc3545';
-  
+
   const subject = `[${organizationName || 'Attendix'}] Your leave request has been ${statusText}`;
   const html = `
     <div style="font-family: Arial, sans-serif; line-height: 1.5;">
@@ -100,15 +100,15 @@ function buildLeaveStatusEmail({ employeeEmail, employeeName, organizationName, 
         ${leave.reason ? `<p><strong>Reason:</strong> ${leave.reason}</p>` : ''}
       </div>
       
-      ${status === 'approved' 
-        ? '<p style="color: #28a745;">Your leave has been approved. Please plan accordingly.</p>'
-        : '<p style="color: #dc3545;">Unfortunately, your leave request could not be approved at this time. Please contact your supervisor for more information.</p>'
-      }
+      ${status === 'approved'
+      ? '<p style="color: #28a745;">Your leave has been approved. Please plan accordingly.</p>'
+      : '<p style="color: #dc3545;">Unfortunately, your leave request could not be approved at this time. Please contact your supervisor for more information.</p>'
+    }
       
       <p style="margin-top: 20px;">Thank you for using ${organizationName || 'Attendix'}.</p>
     </div>
   `;
-  
+
   return {
     to: employeeEmail,
     subject,
@@ -165,10 +165,65 @@ async function sendEmployeeCredentialsEmail({ employeeEmail, employeeName, organ
   return sendMail({ from, ...mail });
 }
 
+function buildAutoAbsentEmail({ employeeEmail, adminEmail, employeeName, organizationName, workDate }) {
+  // Format date as DD-MM-YYYY
+  const formatDate = (dateStr) => {
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${day}-${month}-${year}`;
+  };
+
+  const formattedDate = formatDate(workDate);
+  const subject = `[${organizationName || 'Attendix'}] Auto-Absent Notification`;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+      <h2 style="color: #dc3545;">Auto-Absent Marked</h2>
+      <p>Dear ${employeeName},</p>
+      <p>You have been automatically marked as <strong style="color: #dc3545;">Absent</strong> for <strong>${formattedDate}</strong>.</p>
+      
+      <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;">
+        <p>This action was taken because the system did not record any clock-in activity or an approved leave request for you on this date.</p>
+      </div>
+      
+      <p>If you believe this is an error, please contact your manager or the HR department immediately to rectify your attendance records.</p>
+      
+      <p style="margin-top: 20px;">Thank you,<br/>${organizationName || 'Attendix'} Team</p>
+    </div>
+  `;
+
+  const mailOptions = {
+    to: employeeEmail,
+    subject,
+    html
+  };
+
+  // Agar admin ka email mila, toh use CC mein add kar do
+  if (adminEmail) {
+    mailOptions.cc = adminEmail;
+  }
+
+  return mailOptions;
+}
+
+async function sendAutoAbsentEmail({ employeeEmail, adminEmail, employeeName, organizationName, workDate }) {
+  if (!employeeEmail) {
+    throw new Error('Employee email is required');
+  }
+  const mail = buildAutoAbsentEmail({ employeeEmail, adminEmail, employeeName, organizationName, workDate });
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@attendix.local';
+  // sendMail emailService ki apni function hai
+  return sendMail({ from, ...mail });
+}
+
 module.exports = {
   sendNewLeaveRequestEmail,
   sendLeaveStatusEmail,
-  sendEmployeeCredentialsEmail
+  sendEmployeeCredentialsEmail,
+  sendAutoAbsentEmail
 };
 
 

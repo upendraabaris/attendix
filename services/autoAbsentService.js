@@ -4,6 +4,7 @@ const {
   getWorkWeekPolicyByOrganization,
   isWeeklyOffAsPerPolicy,
 } = require("./compOffService");
+const { sendAutoAbsentEmail } = require("./emailService");
 
 const ABSENT_LEAVE_TYPE = "other";
 const ABSENT_REASON = "Absent";
@@ -97,12 +98,14 @@ const isHolidayOrWeeklyOff = async (organizationId, workDate) => {
 const getActiveEmployeesByOrganization = async (organizationId) => {
   const result = await pool.query(
     `
-      SELECT id, name
-      FROM employees
-      WHERE organization_id = $1
-        AND COALESCE(status, 'active') = 'active'
-        AND LOWER(role) != 'admin'
-      ORDER BY id ASC
+      SELECT e.id, e.name, u.email, o.name AS organization_name
+      FROM employees e
+      LEFT JOIN users u ON e.id = u.employee_id
+      LEFT JOIN organizations o ON e.organization_id = o.id
+      WHERE e.organization_id = $1
+      AND COALESCE(e.status,'active') = 'active'
+      AND LOWER(e.role) != 'admin'
+      ORDER BY e.id ASC
     `,
     [organizationId]
   );
@@ -153,6 +156,25 @@ const createAbsentLeave = async (employeeId, workDate) => {
   return result.rows[0] || null;
 };
 
+const getAdminEmailForOrganization = async (organizationId) => {
+  const result = await pool.query(
+    `
+      SELECT u.email AS admin_email
+      FROM organizations o
+      JOIN employees e ON e.organization_id = o.id
+      JOIN users u ON u.employee_id = e.id
+      WHERE o.id = $1
+        AND e.role = 'admin'
+        AND e.status = 'active'
+        AND u.email IS NOT NULL
+      ORDER BY e.id ASC
+      LIMIT 1
+    `,
+    [organizationId]
+  );
+  return result.rows[0]?.admin_email || null;
+};
+
 const processAutoAbsentForOrganization = async (organizationId, workDateInput) => {
   const workDate = toDateOnly(workDateInput);
   if (!workDate) {
@@ -187,6 +209,7 @@ const processAutoAbsentForOrganization = async (organizationId, workDateInput) =
   }
 
   const employees = await getActiveEmployeesByOrganization(organizationId);
+  const adminEmail = await getAdminEmailForOrganization(organizationId);
   const errors = [];
   let createdCount = 0;
   let skippedCount = 0;
@@ -205,6 +228,19 @@ const processAutoAbsentForOrganization = async (organizationId, workDateInput) =
 
       await createAbsentLeave(employee.id, workDate);
       createdCount += 1;
+
+      console.log(`Debug AutoAbsent: Employee ${employee.name} (ID: ${employee.id}), Email: ${employee.email}`);
+
+      // Send auto absent email to employee
+      if (employee.email) {
+        sendAutoAbsentEmail({
+          employeeEmail: employee.email,
+          adminEmail: adminEmail,
+          employeeName: employee.name,
+          organizationName: employee.organization_name || 'Attendix',
+          workDate: workDate
+        }).catch(err => console.error("Auto-absent email failed:", err.message));
+      }
     } catch (error) {
       errors.push({
         employee_id: employee.id,

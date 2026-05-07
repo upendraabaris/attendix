@@ -1,5 +1,7 @@
 const {
   getWorkWeekPolicyByOrganization,
+  getHolidayForDate,
+  isWeeklyOffAsPerPolicy,
   upsertWorkWeekPolicy,
   updateWorkWeekPolicy,
   createHoliday,
@@ -32,6 +34,28 @@ const resolveEmployeeScope = (req, employeeIdFromParams) => {
   }
   return Number(req.user?.employee_id);
 };
+
+const getDateOnly = (value) => {
+  if (!value) return null;
+
+  const match = String(value).trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) {
+    return match[1];
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString().slice(0, 10);
+};
+
+const getDayName = (dateOnly) =>
+  new Date(`${dateOnly}T00:00:00`).toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: "Asia/Kolkata",
+  });
 
 const saveWorkWeekPolicy = async (req, res) => {
   const organizationId = ensureOrganization(req, res);
@@ -69,6 +93,76 @@ const fetchWorkWeekPolicy = async (req, res) => {
     return res.status(500).json({
       statusCode: 500,
       message: "Failed to retrieve work week policy",
+      error: error.message,
+    });
+  }
+};
+
+const checkWorkDateStatus = async (req, res) => {
+  const organizationId = ensureOrganization(req, res);
+  if (!organizationId) return;
+
+  const workDate = getDateOnly(req.query?.work_date || req.query?.workDate);
+  if (!workDate) {
+    return res.status(400).json({
+      statusCode: 400,
+      message: "Valid work_date is required in YYYY-MM-DD format",
+    });
+  }
+
+  try {
+    const [policy, holiday] = await Promise.all([
+      getWorkWeekPolicyByOrganization(organizationId),
+      getHolidayForDate(organizationId, workDate),
+    ]);
+
+    const isSunday = new Date(`${workDate}T00:00:00`).getDay() === 0;
+    const policyStartDayName = policy?.policy_start_date
+      ? getDayName(policy.policy_start_date)
+      : null;
+    const isWeeklyOff = isWeeklyOffAsPerPolicy(
+      workDate,
+      policy?.policy_name,
+      policy?.policy_start_date
+    );
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Work date status retrieved successfully",
+      data: {
+        organization_id: Number(organizationId),
+        work_date: workDate,
+        day_name: getDayName(workDate),
+        is_holiday: Boolean(holiday),
+        is_weekly_off: isWeeklyOff,
+        is_working_day: !holiday && !isWeeklyOff,
+        reason: holiday ? "holiday" : isWeeklyOff ? "weekly_off" : "working_day",
+        holiday: holiday || null,
+        policy: policy
+          ? {
+              id: policy.id,
+              policy_name: policy.policy_name,
+              policy_label: policy.policy_label,
+              policy_start_date: policy.policy_start_date,
+              policy_start_day_name: policyStartDayName,
+              is_policy_start_saturday: policyStartDayName === "Saturday",
+            }
+          : null,
+        debug: {
+          is_sunday: isSunday,
+          note:
+            policy?.policy_name === "alternate_saturday_and_every_sunday_off" &&
+            policy?.policy_start_date &&
+            policyStartDayName !== "Saturday"
+              ? "policy_start_date is not a Saturday, so alternate Saturday logic will not mark later Saturdays as weekly off"
+              : null,
+        },
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to check work date status",
       error: error.message,
     });
   }
@@ -381,6 +475,7 @@ const markCompOffUsed = async (req, res) => {
 module.exports = {
   saveWorkWeekPolicy,
   fetchWorkWeekPolicy,
+  checkWorkDateStatus,
   editWorkWeekPolicy,
   addHoliday,
   getHolidays,

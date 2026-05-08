@@ -52,6 +52,11 @@ const normalizeDateOnlyInput = (value) => {
   return `${year}-${month}-${day}`;
 };
 
+const normalizePolicyStartDate = (value) => {
+  const normalized = normalizeDateOnlyInput(value);
+  return normalized || null;
+};
+
 const normalizePolicyName = (policyName) => {
   const value = String(policyName || "")
     .trim()
@@ -143,6 +148,7 @@ const getWorkWeekPolicyByOrganization = async (organizationId) => {
 
   return {
     ...row,
+    policy_start_date: normalizePolicyStartDate(row.policy_start_date),
     policy_label: WORK_WEEK_POLICIES[row.policy_name] || row.policy_name,
   };
 };
@@ -166,6 +172,7 @@ const upsertWorkWeekPolicy = async (organizationId, payload) => {
 
   return {
     ...result.rows[0],
+    policy_start_date: normalizePolicyStartDate(result.rows[0]?.policy_start_date),
     policy_label: WORK_WEEK_POLICIES[data.policy_name],
   };
 };
@@ -202,6 +209,7 @@ const updateWorkWeekPolicy = async (organizationId, policyId, payload) => {
 
   return {
     ...result.rows[0],
+    policy_start_date: normalizePolicyStartDate(result.rows[0]?.policy_start_date),
     policy_label: WORK_WEEK_POLICIES[data.policy_name],
   };
 };
@@ -322,7 +330,9 @@ const getSaturdayOccurrence = (dateValue) => Math.ceil(dateValue.getDate() / 7);
 const toDateOnly = (value) => new Date(`${value}T00:00:00`);
 
 const isWeeklyOffAsPerPolicy = (workDate, policyName, policyStartDate = null) => {
-  const dateValue = toDateOnly(workDate);
+  const normalizedWorkDate = normalizeDateOnlyInput(workDate);
+  const normalizedPolicyStartDate = normalizePolicyStartDate(policyStartDate);
+  const dateValue = toDateOnly(normalizedWorkDate);
   const day = dateValue.getDay();
 
   if (day === 0) {
@@ -340,11 +350,11 @@ const isWeeklyOffAsPerPolicy = (workDate, policyName, policyStartDate = null) =>
   }
 
   if (policyName === "alternate_saturday_and_every_sunday_off") {
-    if (!policyStartDate) {
+    if (!normalizedPolicyStartDate) {
       return occurrence % 2 === 1;
     }
 
-    const startDate = toDateOnly(policyStartDate);
+    const startDate = toDateOnly(normalizedPolicyStartDate);
     if (startDate.getDay() !== 6 || dateValue < startDate) {
       return false;
     }

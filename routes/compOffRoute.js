@@ -5,8 +5,10 @@ const {
   fetchCompOffBalance,
   fetchCompOffHistory,
   markCompOffUsed,
+  checkWorkDateStatus,
 } = require("../controllers/compOffController");
 
+router.get("/check-work-date", authenticate, checkWorkDateStatus);
 router.post("/earn", authenticate, earnCompOffForWorkDay);
 router.get("/balance/:employee_id", authenticate, fetchCompOffBalance);
 router.get("/history/:employee_id", authenticate, fetchCompOffHistory);

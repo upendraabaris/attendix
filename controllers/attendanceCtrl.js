@@ -64,15 +64,15 @@ const clockOut = async (req, res) => {
 
     // Non-blocking earned leave sync based on present/working days.
     try {
-      await syncEarnedLeaveBalanceForEmployee(employeeId,'earned');
+      await syncEarnedLeaveBalanceForEmployee(employeeId, 'earned');
     } catch (earnedSyncError) {
       console.error("Earned leave sync failed:", earnedSyncError.message);
     }
 
-    
+
     // Non-blocking earned leave sync based on present/working days.
     try {
-      await syncEarnedLeaveBalanceForEmployee(employeeId,'casual');
+      await syncEarnedLeaveBalanceForEmployee(employeeId, 'casual');
     } catch (earnedSyncError) {
       console.error("Casual leave sync failed:", earnedSyncError.message);
     }

@@ -1,10 +1,15 @@
+const express = require("express");
+
+const router = express.Router();
+
 const {
     startBreak,
     endBreak
 } = require("../controllers/breakControllers");
 
 
-const authenticate =
+
+const { authenticate } =
     require("../middleware/authMiddleware");
 
 

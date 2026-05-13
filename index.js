@@ -109,6 +109,7 @@ const autoAbsentRoute = require("./routes/autoAbsentRoute");
 const { startAutoAbsentScheduler } = require("./services/autoAbsentService");
 const trackingSettingsRoute = require("./routes/trackingSettingsRoute");
 const breakRoutes = require("./routes/breakRoutes");
+const supportRoute = require("./routes/supportRoute");
 
 
 
@@ -128,6 +129,7 @@ app.use("/api/reports", reportRoute);
 app.use("/api/auto-absent", autoAbsentRoute);
 app.use("/api/tracking-settings", trackingSettingsRoute);
 app.use("/api/break", breakRoutes);
+app.use("/api/support", supportRoute);
 
 // ✅ Default route
 app.get("/", (req, res) => res.send("Hello world"));

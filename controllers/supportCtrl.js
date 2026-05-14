@@ -14,11 +14,17 @@ const buildAttachmentUrl = (attachmentPath) => {
 };
 
 const normalizeRole = (role) => String(role || "").toLowerCase();
+const isGlobalSupportRole = (role) => normalizeRole(role) === "support";
+const isOrganizationAdminRole = (role) => normalizeRole(role) === "admin";
 
 const canAccessTicket = (ticket, user) => {
   const role = normalizeRole(user.role);
 
-  if (role === "admin" || role === "support") {
+  if (isGlobalSupportRole(role)) {
+    return true;
+  }
+
+  if (isOrganizationAdminRole(role)) {
     return Number(ticket.organization_id) === Number(user.organization_id);
   }
 
@@ -45,9 +51,11 @@ const getTicketById = async (ticketId) => {
         st.attachment_url,
         st.created_at,
         st.updated_at,
+        o.name AS organization_name,
         e.name AS employee_name,
         e.email AS employee_email
       FROM support_tickets st
+      JOIN organizations o ON o.id = st.organization_id
       JOIN employees e ON e.id = st.employee_id
       WHERE st.id = $1
       LIMIT 1
@@ -61,6 +69,13 @@ const getTicketById = async (ticketId) => {
 const createSupportTicket = async (req, res) => {
   const { title, description } = req.body;
   const { employee_id: employeeId, organization_id: organizationId, user_id: userId, role } = req.user;
+
+  if (isGlobalSupportRole(role)) {
+    return res.status(403).json({
+      statusCode: 403,
+      message: "Support users cannot create support tickets",
+    });
+  }
 
   if (!title || !description) {
     return res.status(400).json({
@@ -124,10 +139,15 @@ const getSupportTickets = async (req, res) => {
   const status = req.query.status ? String(req.query.status).toLowerCase() : "";
 
   try {
-    const params = [organizationId];
-    const conditions = ["st.organization_id = $1"];
+    const params = [];
+    const conditions = [];
 
-    if (normalizedRole !== "admin" && normalizedRole !== "support") {
+    if (!isGlobalSupportRole(normalizedRole)) {
+      params.push(organizationId);
+      conditions.push(`st.organization_id = $${params.length}`);
+    }
+
+    if (!isOrganizationAdminRole(normalizedRole) && !isGlobalSupportRole(normalizedRole)) {
       params.push(employeeId);
       conditions.push(`st.employee_id = $${params.length}`);
     }
@@ -151,11 +171,13 @@ const getSupportTickets = async (req, res) => {
           st.attachment_url,
           st.created_at,
           st.updated_at,
+          o.name AS organization_name,
           e.name AS employee_name,
           e.email AS employee_email
         FROM support_tickets st
+        JOIN organizations o ON o.id = st.organization_id
         JOIN employees e ON e.id = st.employee_id
-        WHERE ${conditions.join(" AND ")}
+        ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
         ORDER BY st.created_at DESC
       `,
       params
@@ -211,11 +233,13 @@ const getSupportTicketComments = async (req, res) => {
           sc.comment,
           sc.commented_by_user_id,
           sc.commented_by_employee_id,
+          sc.commented_by_support_user_id,
           sc.commented_by_role,
           sc.created_at,
-          e.name AS commented_by_name
+          COALESCE(e.name, su.name) AS commented_by_name
         FROM support_comments sc
         LEFT JOIN employees e ON e.id = sc.commented_by_employee_id
+        LEFT JOIN support_users su ON su.id = sc.commented_by_support_user_id
         WHERE sc.ticket_id = $1
         ORDER BY sc.created_at ASC
       `,
@@ -240,7 +264,7 @@ const getSupportTicketComments = async (req, res) => {
 const addSupportTicketComment = async (req, res) => {
   const ticketId = Number(req.params.ticketId);
   const comment = String(req.body.comment || "").trim();
-  const { user_id: userId, employee_id: employeeId, role } = req.user;
+  const { user_id: userId, employee_id: employeeId, support_user_id: supportUserId, role } = req.user;
 
   if (!ticketId) {
     return res.status(400).json({
@@ -280,12 +304,13 @@ const addSupportTicketComment = async (req, res) => {
           comment,
           commented_by_user_id,
           commented_by_employee_id,
+          commented_by_support_user_id,
           commented_by_role
         )
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
       `,
-      [ticketId, comment, userId, employeeId, normalizeRole(role)]
+      [ticketId, comment, userId || null, employeeId || null, supportUserId || null, normalizeRole(role)]
     );
 
     await pool.query(
@@ -314,7 +339,7 @@ const updateSupportTicketStatus = async (req, res) => {
   const allowedStatuses = new Set(["open", "in_progress", "resolved", "closed"]);
   const role = normalizeRole(req.user.role);
 
-  if (role !== "admin" && role !== "support") {
+  if (!isOrganizationAdminRole(role) && !isGlobalSupportRole(role)) {
     return res.status(403).json({
       statusCode: 403,
       message: "Only admin or support users can update ticket status",
@@ -329,15 +354,25 @@ const updateSupportTicketStatus = async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
+    const query = isGlobalSupportRole(role)
+      ? `
+        UPDATE support_tickets
+        SET status = $1, updated_at = NOW()
+        WHERE id = $2
+        RETURNING *
       `
+      : `
         UPDATE support_tickets
         SET status = $1, updated_at = NOW()
         WHERE id = $2 AND organization_id = $3
         RETURNING *
-      `,
-      [status, ticketId, req.user.organization_id]
-    );
+      `;
+
+    const params = isGlobalSupportRole(role)
+      ? [status, ticketId]
+      : [status, ticketId, req.user.organization_id];
+
+    const result = await pool.query(query, params);
 
     if (!result.rows.length) {
       return res.status(404).json({

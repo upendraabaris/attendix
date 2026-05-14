@@ -1,7 +1,7 @@
 const pool = require("../configure/dbConfig");
 const { syncEarnedLeaveBalanceForEmployee } = require("./leaveBalanceService");
 
-const SUPPORTED_LEAVE_TYPES = ["sick", "personal", "other", "earned", "casual", "compensation", "paternity", "vacation"];
+const SUPPORTED_LEAVE_TYPES = ["sick", "personal", "other", "earned", "casual", "compensation", "paternity", "vacation", "unpaid"];
 const COMP_OFF_LEAVE_TYPES = ["compensation", "comp_off"];
 const RULE_BASED_LEAVE_TYPES = ["earned", "casual"];
 const LEAVE_BALANCE_TYPE_ALIASES = {

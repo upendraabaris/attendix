@@ -163,6 +163,7 @@ const generateAttendanceReport = async (req, res) => {
             // --- Naya Logic End ---
 
             return {
+                employee_id: emp.id, // <--- YEH ADDKARNA HAI
                 name: emp.name,
                 totalWorkingDays: totalWorkingDays,
                 actualWorkingDays: presentDaysCount - nonWorkingDaysWorkedCount,

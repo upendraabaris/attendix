@@ -410,6 +410,69 @@ const loginEmployeeDashboard = async (req, res) => {
   }
 };
 
+const loginSupportDashboard = async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  try {
+    const result = await db.query(
+      `
+      SELECT
+        id,
+        name,
+        email,
+        password_hash,
+        status,
+        created_at
+      FROM support_users
+      WHERE email = $1
+      LIMIT 1
+      `,
+      [email]
+    );
+
+    const user = result.rows[0];
+
+    if (!user) {
+      return res.status(404).json({ error: 'Support user not found' });
+    }
+
+    if (String(user.status || '').toLowerCase() !== 'active') {
+      return res.status(403).json({ error: 'Support account is inactive' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign(
+      {
+        support_user_id: user.id,
+        role: 'support'
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
+    delete user.password_hash;
+
+    return res.json({
+      token,
+      user: {
+        ...user,
+        role: 'support'
+      }
+    });
+  } catch (err) {
+    console.error('Support login error:', err);
+    return res.status(500).json({ error: 'Login error', details: err.message });
+  }
+};
+
 // Change Password (Authenticated)
 // ================================
 const changePassword = async (req, res) => {
@@ -419,12 +482,19 @@ const changePassword = async (req, res) => {
   }
 
   try {
-    const userId = req.user.user_id; // from middleware
+    const userId = req.user.user_id;
+    const supportUserId = req.user.support_user_id;
+    const isSupportUser = Boolean(supportUserId) && String(req.user.role || '').toLowerCase() === 'support';
 
-    const result = await db.query(
-      `SELECT id, password_hash FROM users WHERE id = $1`,
-      [userId]
-    );
+    const result = isSupportUser
+      ? await db.query(
+          `SELECT id, password_hash FROM support_users WHERE id = $1`,
+          [supportUserId]
+        )
+      : await db.query(
+          `SELECT id, password_hash FROM users WHERE id = $1`,
+          [userId]
+        );
 
     const user = result.rows[0];
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -434,10 +504,17 @@ const changePassword = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    await db.query(
-      `UPDATE users SET password_hash = $1 WHERE id = $2`,
-      [hashedPassword, userId]
-    );
+    if (isSupportUser) {
+      await db.query(
+        `UPDATE support_users SET password_hash = $1 WHERE id = $2`,
+        [hashedPassword, supportUserId]
+      );
+    } else {
+      await db.query(
+        `UPDATE users SET password_hash = $1 WHERE id = $2`,
+        [hashedPassword, userId]
+      );
+    }
 
     res.status(200).json({ message: 'Password changed successfully' });
   } catch (error) {
@@ -454,5 +531,6 @@ module.exports = {
   registerUser,
   loginAdminDashboard,
   loginEmployeeDashboard,
+  loginSupportDashboard,
   changePassword
 };

@@ -47,7 +47,7 @@ const saveLeaveAttachment = async ({ leaveId, employeeId, file }) => {
   }
 
   // Upload file to AWS S3
-  const s3Url = await uploadToS3(file);
+  const s3Url = await uploadToS3(file, { folderName: "leave-proofs" });
 
   const result = await pool.query(
     `

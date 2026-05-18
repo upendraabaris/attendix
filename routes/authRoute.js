@@ -9,6 +9,7 @@ const {
   registerUser,
   loginAdminDashboard,
   loginEmployeeDashboard,
+  loginSupportDashboard,
   changePassword
 } = require("../controllers/authCtrl");
 
@@ -26,6 +27,9 @@ router.post('/register', registerUser);
 
 // Admin login dashboard
 router.post('/admin-dashboard', loginAdminDashboard);
+
+// Support login dashboard
+router.post('/support-dashboard', loginSupportDashboard);
 
 // Employee web login with email + password
 router.post('/employee/login/web', loginEmployeeDashboard);

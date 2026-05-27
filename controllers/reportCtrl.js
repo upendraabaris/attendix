@@ -89,15 +89,30 @@ const generateAttendanceReport = async (req, res) => {
 
         // 4. Fetch Attendance Records for all employees in batch
         // We join with employees because the attendance table itself doesn't have organization_id
+        // const attendanceResult = await pool.query(
+        //     `SELECT 
+        //         a.employee_id, 
+        //         DATE(a.timestamp)::text as work_date 
+        //      FROM attendance a
+        //      JOIN employees e ON a.employee_id = e.id
+        //      WHERE e.organization_id = $1
+        //        AND a.type = 'in'
+        //        AND DATE(a.timestamp) BETWEEN $2 AND $3`,
+        //     [organizationId, startDate, endDate]
+        // );
         const attendanceResult = await pool.query(
             `SELECT 
-                a.employee_id, 
-                DATE(a.timestamp)::text as work_date 
-             FROM attendance a
-             JOIN employees e ON a.employee_id = e.id
-             WHERE e.organization_id = $1
-               AND a.type = 'in'
-               AND DATE(a.timestamp) BETWEEN $2 AND $3`,
+        a.employee_id,
+        DATE(a.timestamp)::text as work_date
+     FROM attendance a
+     JOIN employees e ON a.employee_id = e.id
+     WHERE e.organization_id = $1
+       AND DATE(a.timestamp) BETWEEN $2 AND $3
+     GROUP BY a.employee_id, DATE(a.timestamp)
+     HAVING 
+        COUNT(CASE WHEN a.type = 'in' THEN 1 END) > 0
+        AND
+        COUNT(CASE WHEN a.type = 'out' THEN 1 END) > 0`,
             [organizationId, startDate, endDate]
         );
 
@@ -111,31 +126,78 @@ const generateAttendanceReport = async (req, res) => {
         });
 
         // 5. Fetch Approved Leave Requests for the Organization
+        // const leavesResult = await pool.query(
+        //     `SELECT 
+        //         employee_id, start_date, end_date 
+        //      FROM leave_requests 
+        //      WHERE status = 'approved'
+        //        AND employee_id IN (SELECT id FROM employees WHERE organization_id = $1)
+        //        AND (start_date <= $3 AND end_date >= $2)`,
+        //     [organizationId, startDate, endDate]
+        // );
         const leavesResult = await pool.query(
             `SELECT 
-                employee_id, start_date, end_date 
-             FROM leave_requests 
-             WHERE status = 'approved'
-               AND employee_id IN (SELECT id FROM employees WHERE organization_id = $1)
-               AND (start_date <= $3 AND end_date >= $2)`,
+        employee_id,
+        start_date,
+        end_date,
+        type
+     FROM leave_requests 
+     WHERE status = 'approved'
+       AND employee_id IN (
+            SELECT id 
+            FROM employees 
+            WHERE organization_id = $1
+       )
+       AND (start_date <= $3 AND end_date >= $2)`,
             [organizationId, startDate, endDate]
         );
 
         // Group leaves by employee and calculate overlapping days
+        // const leavesMap = {};
+        // leavesResult.rows.forEach(row => {
+        //     const empId = row.employee_id;
+
+        //     // Calculate overlap between [startDate, endDate] and [row.start_date, row.end_date]
+        //     const overlapStart = new Date(Math.max(new Date(startDate), new Date(row.start_date)));
+        //     const overlapEnd = new Date(Math.min(new Date(endDate), new Date(row.end_date)));
+
+        //     const diffMs = overlapEnd - overlapStart;
+        //     const overlapDays = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1);
+
+        //     if (!leavesMap[empId]) leavesMap[empId] = 0;
+        //     leavesMap[empId] += overlapDays;
+        // });
         const leavesMap = {};
-        leavesResult.rows.forEach(row => {
-            const empId = row.employee_id;
+const unpaidLeavesMap = {};
 
-            // Calculate overlap between [startDate, endDate] and [row.start_date, row.end_date]
-            const overlapStart = new Date(Math.max(new Date(startDate), new Date(row.start_date)));
-            const overlapEnd = new Date(Math.min(new Date(endDate), new Date(row.end_date)));
+leavesResult.rows.forEach(row => {
+    const empId = row.employee_id;
 
-            const diffMs = overlapEnd - overlapStart;
-            const overlapDays = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1);
+    const overlapStart = new Date(
+        Math.max(new Date(startDate), new Date(row.start_date))
+    );
 
-            if (!leavesMap[empId]) leavesMap[empId] = 0;
-            leavesMap[empId] += overlapDays;
-        });
+    const overlapEnd = new Date(
+        Math.min(new Date(endDate), new Date(row.end_date))
+    );
+
+    const diffMs = overlapEnd - overlapStart;
+
+    const overlapDays = Math.max(
+        0,
+        Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1
+    );
+
+    // Total leaves
+    if (!leavesMap[empId]) leavesMap[empId] = 0;
+    leavesMap[empId] += overlapDays;
+
+    // Unpaid leaves
+    if (row.type?.trim().toLowerCase() === 'unpaid') {
+        if (!unpaidLeavesMap[empId]) unpaidLeavesMap[empId] = 0;
+        unpaidLeavesMap[empId] += overlapDays;
+    }
+});
 
         // 6. Build Employee Breakdown
         // const employeeRows = employees.map(emp => {
@@ -147,6 +209,7 @@ const generateAttendanceReport = async (req, res) => {
             const attendanceSet = attendanceMap[emp.id] || new Set();
             const presentDaysCount = attendanceSet.size;
             const leaveDaysCount = leavesMap[emp.id] || 0;
+            const unpaidLeaveDaysCount = unpaidLeavesMap[emp.id] || 0;
 
             // --- Naya Logic Start ---
             let nonWorkingDaysWorkedCount = 0;
@@ -169,6 +232,7 @@ const generateAttendanceReport = async (req, res) => {
                 actualWorkingDays: presentDaysCount - nonWorkingDaysWorkedCount,
                 nonWorkingDaysWorked: nonWorkingDaysWorkedCount, // <--- Naya field add kiya
                 leaves: leaveDaysCount,
+                unpaidLeaves: unpaidLeaveDaysCount,
                 holidays: totalHolidays
             };
         });

@@ -32,7 +32,39 @@ const { getCompOffBalance } = require("./compOffService");
 
 const getEmployeeLeaveBalances = async (employeeId) => {
   // 
-  const result = await pool.query(
+//   const result = await pool.query(
+//   `
+//   SELECT
+//     lp.leave_type,
+
+//     COALESCE(elb.id, 0) AS id,
+
+//     $1 AS employee_id,
+
+//     COALESCE(elb.used_days, 0) AS used_days,
+
+//     COALESCE(elb.balance, lp.yearly_limit, 0) AS balance,
+
+//     elb.updated_at
+
+//   FROM leave_policies lp
+
+//   LEFT JOIN employee_leave_balance elb
+//     ON elb.leave_type = lp.leave_type
+//     AND elb.employee_id = $1
+
+//   JOIN employees e
+//     ON e.organization_id = lp.organization_id
+
+//   WHERE e.id = $1
+//     AND lp.leave_type <> 'vacation'
+//     AND lp.is_enabled = true
+
+//   ORDER BY lp.leave_type
+//   `,
+//   [employeeId]
+// );
+const result = await pool.query(
   `
   SELECT
     lp.leave_type,
@@ -41,9 +73,17 @@ const getEmployeeLeaveBalances = async (employeeId) => {
 
     $1 AS employee_id,
 
-    COALESCE(elb.used_days, 0) AS used_days,
+    COALESCE(used_data.used_days, 0) AS used_days,
 
-    COALESCE(elb.balance, lp.yearly_limit, 0) AS balance,
+    CASE
+      WHEN lp.leave_type IN ('earned', 'casual')
+        THEN COALESCE(elb.balance, 0)
+
+      ELSE GREATEST(
+        lp.yearly_limit - COALESCE(used_data.used_days, 0),
+        0
+      )
+    END AS balance,
 
     elb.updated_at
 
@@ -52,6 +92,26 @@ const getEmployeeLeaveBalances = async (employeeId) => {
   LEFT JOIN employee_leave_balance elb
     ON elb.leave_type = lp.leave_type
     AND elb.employee_id = $1
+
+  LEFT JOIN (
+    SELECT
+      lr.type,
+
+      SUM(
+        CASE
+          WHEN lr.is_half_day THEN 0.5
+          ELSE (lr.end_date - lr.start_date + 1)
+        END
+      ) AS used_days
+
+    FROM leave_requests lr
+
+    WHERE lr.employee_id = $1
+      AND lr.status = 'approved'
+
+    GROUP BY lr.type
+  ) used_data
+    ON used_data.type = lp.leave_type
 
   JOIN employees e
     ON e.organization_id = lp.organization_id
@@ -65,23 +125,38 @@ const getEmployeeLeaveBalances = async (employeeId) => {
   [employeeId]
 );
 
+  // const balances = await Promise.all(
+  //   result.rows.map(async (row) => {
+  //     const pendingDays = await getPendingLeaveDays(
+  //       employeeId,
+  //       row.leave_type
+  //     );
+
+  //     const grossBalance = Number(row.balance || 0);
+
+  //     return {
+  //       ...row,
+  //       accrued_balance: grossBalance,
+  //       pending_days: pendingDays,
+  //       balance: Math.max(grossBalance - pendingDays, 0),
+  //     };
+  //   })
+  // );
   const balances = await Promise.all(
-    result.rows.map(async (row) => {
-      const pendingDays = await getPendingLeaveDays(
-        employeeId,
-        row.leave_type
-      );
+  result.rows.map(async (row) => {
+    const pendingDays = await getPendingLeaveDays(
+      employeeId,
+      row.leave_type
+    );
 
-      const grossBalance = Number(row.balance || 0);
-
-      return {
-        ...row,
-        accrued_balance: grossBalance,
-        pending_days: pendingDays,
-        balance: Math.max(grossBalance - pendingDays, 0),
-      };
-    })
-  );
+    return {
+      ...row,
+      accrued_balance: Number(row.balance || 0),
+      pending_days: pendingDays,
+      balance: Number(row.balance || 0),
+    };
+  })
+);
 
   return balances;
 };

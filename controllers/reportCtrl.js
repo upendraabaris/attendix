@@ -168,36 +168,36 @@ const generateAttendanceReport = async (req, res) => {
         //     leavesMap[empId] += overlapDays;
         // });
         const leavesMap = {};
-const unpaidLeavesMap = {};
+        const unpaidLeavesMap = {};
 
-leavesResult.rows.forEach(row => {
-    const empId = row.employee_id;
+        leavesResult.rows.forEach(row => {
+            const empId = row.employee_id;
 
-    const overlapStart = new Date(
-        Math.max(new Date(startDate), new Date(row.start_date))
-    );
+            const overlapStart = new Date(
+                Math.max(new Date(startDate), new Date(row.start_date))
+            );
 
-    const overlapEnd = new Date(
-        Math.min(new Date(endDate), new Date(row.end_date))
-    );
+            const overlapEnd = new Date(
+                Math.min(new Date(endDate), new Date(row.end_date))
+            );
 
-    const diffMs = overlapEnd - overlapStart;
+            const diffMs = overlapEnd - overlapStart;
 
-    const overlapDays = Math.max(
-        0,
-        Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1
-    );
+            const overlapDays = Math.max(
+                0,
+                Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1
+            );
 
-    // Total leaves
-    if (!leavesMap[empId]) leavesMap[empId] = 0;
-    leavesMap[empId] += overlapDays;
+            // Total leaves
+            if (!leavesMap[empId]) leavesMap[empId] = 0;
+            leavesMap[empId] += overlapDays;
 
-    // Unpaid leaves
-    if (row.type?.trim().toLowerCase() === 'unpaid') {
-        if (!unpaidLeavesMap[empId]) unpaidLeavesMap[empId] = 0;
-        unpaidLeavesMap[empId] += overlapDays;
-    }
-});
+            // Unpaid leaves
+            if (row.type?.trim().toLowerCase() === 'unpaid') {
+                if (!unpaidLeavesMap[empId]) unpaidLeavesMap[empId] = 0;
+                unpaidLeavesMap[empId] += overlapDays;
+            }
+        });
 
         // 6. Build Employee Breakdown
         // const employeeRows = employees.map(emp => {

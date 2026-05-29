@@ -3,6 +3,7 @@ const {
   createLeaveRequest,
   getMyLeaveRequests,
   getMyLeaveBalances,
+  getOrganizationLeaveBalanceReportCtrl,
   getEmployeeLeaveRequests,
   getAllLeaveRequests,
   getPendingLeaveRequests,
@@ -27,6 +28,8 @@ router.post('/', authenticate, leaveUpload.single("medicalProof"), createLeaveRe
 router.get('/my', authenticate, getMyLeaveRequests);
 
 router.get('/my-balances', authenticate, getMyLeaveBalances);
+
+router.get('/balance-report', authenticate, authorizeRoles('admin'), getOrganizationLeaveBalanceReportCtrl);
 
 /**
  * @route GET /api/leave/employee/:employeeId

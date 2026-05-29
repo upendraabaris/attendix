@@ -4,6 +4,7 @@ const {
   listUserConversations,
   getConversationMessages,
   getOrCreateDirectConversation,
+  markConversationAsRead,
   createChatMessage,
   getConversationForUser,
   getConversationSummaryById,
@@ -133,16 +134,72 @@ const getMessagesByConversation = async (req, res) => {
     }
 
     const messages = await getConversationMessages(conversationId);
+    const conversationSummary = await markConversationAsRead({
+      conversationId,
+      organizationId: req.user.organization_id,
+      employeeId: req.user.employee_id,
+    });
+
+    const io = req.app.get("io");
+    io.to(getEmployeeRoom(req.user.employee_id)).emit(
+      "chat:conversation:read",
+      conversationSummary
+    );
+
     return res.status(200).json({
       statusCode: 200,
       message: "Chat messages retrieved successfully",
       data: messages,
+      conversation: conversationSummary,
     });
   } catch (error) {
     console.error("Error fetching chat messages:", error);
     return res.status(500).json({
       statusCode: 500,
       message: "Failed to retrieve chat messages",
+      error: error.message,
+    });
+  }
+};
+
+const markConversationRead = async (req, res) => {
+  if (!ensureChatUser(req, res)) {
+    return;
+  }
+
+  const conversationId = Number(req.params.conversationId);
+
+  if (!conversationId) {
+    return res.status(400).json({
+      statusCode: 400,
+      message: "Valid conversation id is required",
+    });
+  }
+
+  try {
+    const conversation = await markConversationAsRead({
+      conversationId,
+      organizationId: req.user.organization_id,
+      employeeId: req.user.employee_id,
+    });
+
+    const io = req.app.get("io");
+    io.to(getEmployeeRoom(req.user.employee_id)).emit(
+      "chat:conversation:read",
+      conversation
+    );
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Conversation marked as read",
+      data: conversation,
+    });
+  } catch (error) {
+    const isValidation = /not found/i.test(String(error.message || ""));
+
+    return res.status(isValidation ? 404 : 500).json({
+      statusCode: isValidation ? 404 : 500,
+      message: error.message || "Failed to mark conversation as read",
       error: error.message,
     });
   }
@@ -184,15 +241,29 @@ const sendMessageToConversation = async (req, res) => {
     );
 
     const io = req.app.get("io");
+    const participantSummaries = await Promise.all(
+      result.participantEmployeeIds.map(async (employeeId) => ({
+        employeeId,
+        conversation: await getConversationSummaryById(
+          conversationId,
+          employeeId
+        ),
+      }))
+    );
+
+    participantSummaries.forEach(({ employeeId, conversation }) => {
+      io.to(getEmployeeRoom(employeeId)).emit(
+        "chat:conversation:updated",
+        conversation
+      );
+    });
+
     const payload = {
       conversation,
       message: result.message,
     };
 
     io.to(getConversationRoom(conversationId)).emit("chat:message:new", payload);
-    result.participantEmployeeIds.forEach((employeeId) => {
-      io.to(getEmployeeRoom(employeeId)).emit("chat:conversation:updated", conversation);
-    });
 
     return res.status(201).json({
       statusCode: 201,
@@ -215,5 +286,6 @@ module.exports = {
   getChatConversations,
   createOrGetDirectConversation,
   getMessagesByConversation,
+  markConversationRead,
   sendMessageToConversation,
 };

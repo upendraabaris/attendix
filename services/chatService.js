@@ -17,7 +17,11 @@ const serializeMessage = (message) => ({
 
 const serializeConversation = (conversation) => ({
   ...conversation,
-  last_message_attachment_url: buildAttachmentUrl(conversation.last_message_attachment_url),
+  unread_count: Number(conversation.unread_count || 0),
+  has_unread: Number(conversation.unread_count || 0) > 0,
+  last_message_attachment_url: buildAttachmentUrl(
+    conversation.last_message_attachment_url
+  ),
 });
 
 const getEmployeeRoom = (employeeId) => `employee:${employeeId}`;
@@ -47,7 +51,10 @@ const getChatContacts = async (organizationId, currentEmployeeId) => {
   return result.rows;
 };
 
-const assertParticipantsBelongToOrganization = async (organizationId, employeeIds) => {
+const assertParticipantsBelongToOrganization = async (
+  organizationId,
+  employeeIds
+) => {
   const result = await pool.query(
     `
       SELECT id
@@ -64,7 +71,10 @@ const assertParticipantsBelongToOrganization = async (organizationId, employeeId
   }
 };
 
-const getExistingDirectConversation = async (organizationId, participantEmployeeIds) => {
+const getExistingDirectConversation = async (
+  organizationId,
+  participantEmployeeIds
+) => {
   const result = await pool.query(
     `
       SELECT c.*
@@ -99,7 +109,11 @@ const getConversationIdsForEmployee = async (organizationId, employeeId) => {
   return result.rows.map((row) => Number(row.conversation_id));
 };
 
-const getConversationForUser = async (conversationId, organizationId, employeeId) => {
+const getConversationForUser = async (
+  conversationId,
+  organizationId,
+  employeeId
+) => {
   const result = await pool.query(
     `
       SELECT c.*
@@ -117,59 +131,76 @@ const getConversationForUser = async (conversationId, organizationId, employeeId
   return result.rows[0] || null;
 };
 
+const conversationSummarySelect = `
+  SELECT
+    c.id,
+    c.organization_id,
+    c.type,
+    c.created_at,
+    c.updated_at,
+    c.last_message_at,
+    cp.last_read_message_id,
+    cp.last_read_at,
+    other.employee_id AS other_employee_id,
+    other.name AS other_employee_name,
+    other.email AS other_employee_email,
+    other.role AS other_employee_role,
+    lm.id AS last_message_id,
+    lm.message AS last_message_text,
+    lm.attachment_url AS last_message_attachment_url,
+    lm.attachment_name AS last_message_attachment_name,
+    lm.created_at AS last_message_created_at,
+    lm.sender_employee_id AS last_message_sender_employee_id,
+    lm.sender_name AS last_message_sender_name,
+    COALESCE(unread.unread_count, 0)::int AS unread_count
+  FROM chat_conversations c
+  JOIN chat_conversation_participants cp
+    ON cp.conversation_id = c.id
+   AND cp.employee_id = $2
+  LEFT JOIN LATERAL (
+    SELECT
+      cp2.employee_id,
+      e.name,
+      e.email,
+      LOWER(e.role) AS role
+    FROM chat_conversation_participants cp2
+    JOIN employees e ON e.id = cp2.employee_id
+    WHERE cp2.conversation_id = c.id
+      AND cp2.employee_id <> $2
+    ORDER BY cp2.id ASC
+    LIMIT 1
+  ) other ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT
+      m.id,
+      m.message,
+      m.attachment_url,
+      m.attachment_name,
+      m.created_at,
+      m.sender_employee_id,
+      e.name AS sender_name
+    FROM chat_messages m
+    JOIN employees e ON e.id = m.sender_employee_id
+    WHERE m.conversation_id = c.id
+    ORDER BY m.created_at DESC, m.id DESC
+    LIMIT 1
+  ) lm ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT COUNT(*) AS unread_count
+    FROM chat_messages m
+    WHERE m.conversation_id = c.id
+      AND m.sender_employee_id <> $2
+      AND (
+        cp.last_read_message_id IS NULL
+        OR m.id > cp.last_read_message_id
+      )
+  ) unread ON TRUE
+`;
+
 const getConversationSummaryById = async (conversationId, currentEmployeeId) => {
   const result = await pool.query(
     `
-      SELECT
-        c.id,
-        c.organization_id,
-        c.type,
-        c.created_at,
-        c.updated_at,
-        c.last_message_at,
-        other.employee_id AS other_employee_id,
-        other.name AS other_employee_name,
-        other.email AS other_employee_email,
-        other.role AS other_employee_role,
-        lm.id AS last_message_id,
-        lm.message AS last_message_text,
-        lm.attachment_url AS last_message_attachment_url,
-        lm.attachment_name AS last_message_attachment_name,
-        lm.created_at AS last_message_created_at,
-        lm.sender_employee_id AS last_message_sender_employee_id,
-        lm.sender_name AS last_message_sender_name
-      FROM chat_conversations c
-      JOIN chat_conversation_participants me
-        ON me.conversation_id = c.id
-       AND me.employee_id = $2
-      LEFT JOIN LATERAL (
-        SELECT
-          cp.employee_id,
-          e.name,
-          e.email,
-          LOWER(e.role) AS role
-        FROM chat_conversation_participants cp
-        JOIN employees e ON e.id = cp.employee_id
-        WHERE cp.conversation_id = c.id
-          AND cp.employee_id <> $2
-        ORDER BY cp.id ASC
-        LIMIT 1
-      ) other ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT
-          m.id,
-          m.message,
-          m.attachment_url,
-          m.attachment_name,
-          m.created_at,
-          m.sender_employee_id,
-          e.name AS sender_name
-        FROM chat_messages m
-        JOIN employees e ON e.id = m.sender_employee_id
-        WHERE m.conversation_id = c.id
-        ORDER BY m.created_at DESC, m.id DESC
-        LIMIT 1
-      ) lm ON TRUE
+      ${conversationSummarySelect}
       WHERE c.id = $1
       LIMIT 1
     `,
@@ -182,57 +213,8 @@ const getConversationSummaryById = async (conversationId, currentEmployeeId) => 
 const listUserConversations = async (organizationId, employeeId) => {
   const result = await pool.query(
     `
-      SELECT
-        c.id,
-        c.organization_id,
-        c.type,
-        c.created_at,
-        c.updated_at,
-        c.last_message_at,
-        other.employee_id AS other_employee_id,
-        other.name AS other_employee_name,
-        other.email AS other_employee_email,
-        other.role AS other_employee_role,
-        lm.id AS last_message_id,
-        lm.message AS last_message_text,
-        lm.attachment_url AS last_message_attachment_url,
-        lm.attachment_name AS last_message_attachment_name,
-        lm.created_at AS last_message_created_at,
-        lm.sender_employee_id AS last_message_sender_employee_id,
-        lm.sender_name AS last_message_sender_name
-      FROM chat_conversation_participants me
-      JOIN chat_conversations c
-        ON c.id = me.conversation_id
-      LEFT JOIN LATERAL (
-        SELECT
-          cp.employee_id,
-          e.name,
-          e.email,
-          LOWER(e.role) AS role
-        FROM chat_conversation_participants cp
-        JOIN employees e ON e.id = cp.employee_id
-        WHERE cp.conversation_id = c.id
-          AND cp.employee_id <> $2
-        ORDER BY cp.id ASC
-        LIMIT 1
-      ) other ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT
-          m.id,
-          m.message,
-          m.attachment_url,
-          m.attachment_name,
-          m.created_at,
-          m.sender_employee_id,
-          e.name AS sender_name
-        FROM chat_messages m
-        JOIN employees e ON e.id = m.sender_employee_id
-        WHERE m.conversation_id = c.id
-        ORDER BY m.created_at DESC, m.id DESC
-        LIMIT 1
-      ) lm ON TRUE
-      WHERE me.employee_id = $2
-        AND c.organization_id = $1
+      ${conversationSummarySelect}
+      WHERE c.organization_id = $1
       ORDER BY COALESCE(c.last_message_at, c.updated_at, c.created_at) DESC, c.id DESC
     `,
     [organizationId, employeeId]
@@ -284,10 +266,15 @@ const getOrCreateDirectConversation = async ({
     throw new Error("You cannot start a chat with yourself");
   }
 
-  const participantIds = [Number(currentEmployeeId), normalizedParticipantId].sort((a, b) => a - b);
+  const participantIds = [Number(currentEmployeeId), normalizedParticipantId].sort(
+    (a, b) => a - b
+  );
   await assertParticipantsBelongToOrganization(organizationId, participantIds);
 
-  const existingConversation = await getExistingDirectConversation(organizationId, participantIds);
+  const existingConversation = await getExistingDirectConversation(
+    organizationId,
+    participantIds
+  );
   if (existingConversation) {
     return getConversationSummaryById(existingConversation.id, currentEmployeeId);
   }
@@ -314,8 +301,14 @@ const getOrCreateDirectConversation = async ({
 
     await client.query(
       `
-        INSERT INTO chat_conversation_participants (conversation_id, employee_id)
-        VALUES ($1, $2), ($1, $3)
+        INSERT INTO chat_conversation_participants (
+          conversation_id,
+          employee_id,
+          last_read_at
+        )
+        VALUES
+          ($1, $2, NOW()),
+          ($1, $3, NULL)
       `,
       [conversationId, participantIds[0], participantIds[1]]
     );
@@ -328,6 +321,49 @@ const getOrCreateDirectConversation = async ({
   } finally {
     client.release();
   }
+};
+
+const markConversationAsRead = async ({
+  conversationId,
+  organizationId,
+  employeeId,
+}) => {
+  const conversation = await getConversationForUser(
+    conversationId,
+    organizationId,
+    employeeId
+  );
+
+  if (!conversation) {
+    throw new Error("Conversation not found");
+  }
+
+  const latestMessageResult = await pool.query(
+    `
+      SELECT id
+      FROM chat_messages
+      WHERE conversation_id = $1
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    [conversationId]
+  );
+
+  const latestMessageId = Number(latestMessageResult.rows[0]?.id || 0) || null;
+
+  await pool.query(
+    `
+      UPDATE chat_conversation_participants
+      SET
+        last_read_message_id = $1,
+        last_read_at = NOW()
+      WHERE conversation_id = $2
+        AND employee_id = $3
+    `,
+    [latestMessageId, conversationId, employeeId]
+  );
+
+  return getConversationSummaryById(conversationId, employeeId);
 };
 
 const createChatMessage = async ({
@@ -385,6 +421,8 @@ const createChatMessage = async ({
       ]
     );
 
+    const insertedMessageId = Number(inserted.rows[0].id);
+
     await client.query(
       `
         UPDATE chat_conversations
@@ -393,6 +431,23 @@ const createChatMessage = async ({
         WHERE id = $1
       `,
       [conversationId]
+    );
+
+    await client.query(
+      `
+        UPDATE chat_conversation_participants
+        SET
+          last_read_message_id = CASE
+            WHEN employee_id = $2 THEN $3
+            ELSE last_read_message_id
+          END,
+          last_read_at = CASE
+            WHEN employee_id = $2 THEN NOW()
+            ELSE last_read_at
+          END
+        WHERE conversation_id = $1
+      `,
+      [conversationId, senderEmployeeId, insertedMessageId]
     );
 
     const participantsResult = await client.query(
@@ -424,14 +479,16 @@ const createChatMessage = async ({
         WHERE m.id = $1
         LIMIT 1
       `,
-      [inserted.rows[0].id]
+      [insertedMessageId]
     );
 
     await client.query("COMMIT");
 
     return {
       message: serializeMessage(messageResult.rows[0]),
-      participantEmployeeIds: participantsResult.rows.map((row) => Number(row.employee_id)),
+      participantEmployeeIds: participantsResult.rows.map((row) =>
+        Number(row.employee_id)
+      ),
     };
   } catch (error) {
     await client.query("ROLLBACK");
@@ -441,8 +498,16 @@ const createChatMessage = async ({
   }
 };
 
-const canAccessConversation = async (conversationId, organizationId, employeeId) => {
-  const conversation = await getConversationForUser(conversationId, organizationId, employeeId);
+const canAccessConversation = async (
+  conversationId,
+  organizationId,
+  employeeId
+) => {
+  const conversation = await getConversationForUser(
+    conversationId,
+    organizationId,
+    employeeId
+  );
   return Boolean(conversation);
 };
 
@@ -456,6 +521,7 @@ module.exports = {
   listUserConversations,
   getConversationMessages,
   getOrCreateDirectConversation,
+  markConversationAsRead,
   createChatMessage,
   getConversationSummaryById,
   canAccessConversation,

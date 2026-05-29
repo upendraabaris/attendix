@@ -1,20 +1,77 @@
 const pool = require("../configure/dbConfig");
+const { getCompOffBalance } = require("./compOffService");
+
+// const getEmployeeLeaveBalances = async (employeeId) => {
+//   const result = await pool.query(
+//     `
+//       SELECT id, employee_id, leave_type, used_days, balance, updated_at
+//       FROM employee_leave_balance
+//       WHERE employee_id = $1
+//         AND leave_type <> 'vacation'
+//       ORDER BY leave_type
+//     `,
+//     [employeeId]
+//   );
+
+//   const balances = await Promise.all(
+//     result.rows.map(async (row) => {
+//       const pendingDays = await getPendingLeaveDays(employeeId, row.leave_type);
+//       const grossBalance = Number(row.balance || 0);
+
+//       return {
+//         ...row,
+//         accrued_balance: grossBalance,
+//         pending_days: pendingDays,
+//         balance: Math.max(grossBalance - pendingDays, 0),
+//       };
+//     })
+//   );
+
+//   return balances;
+// };
 
 const getEmployeeLeaveBalances = async (employeeId) => {
+  // 
   const result = await pool.query(
-    `
-      SELECT id, employee_id, leave_type, used_days, balance, updated_at
-      FROM employee_leave_balance
-      WHERE employee_id = $1
-        AND leave_type <> 'vacation'
-      ORDER BY leave_type
-    `,
-    [employeeId]
-  );
+  `
+  SELECT
+    lp.leave_type,
+
+    COALESCE(elb.id, 0) AS id,
+
+    $1 AS employee_id,
+
+    COALESCE(elb.used_days, 0) AS used_days,
+
+    COALESCE(elb.balance, lp.yearly_limit, 0) AS balance,
+
+    elb.updated_at
+
+  FROM leave_policies lp
+
+  LEFT JOIN employee_leave_balance elb
+    ON elb.leave_type = lp.leave_type
+    AND elb.employee_id = $1
+
+  JOIN employees e
+    ON e.organization_id = lp.organization_id
+
+  WHERE e.id = $1
+    AND lp.leave_type <> 'vacation'
+    AND lp.is_enabled = true
+
+  ORDER BY lp.leave_type
+  `,
+  [employeeId]
+);
 
   const balances = await Promise.all(
     result.rows.map(async (row) => {
-      const pendingDays = await getPendingLeaveDays(employeeId, row.leave_type);
+      const pendingDays = await getPendingLeaveDays(
+        employeeId,
+        row.leave_type
+      );
+
       const grossBalance = Number(row.balance || 0);
 
       return {
@@ -27,6 +84,45 @@ const getEmployeeLeaveBalances = async (employeeId) => {
   );
 
   return balances;
+};
+
+const mergeCompOffIntoBalances = async (employeeId, organizationId, balances = []) => {
+  const nextBalances = [...balances];
+
+  try {
+    const compOffBalance = await getCompOffBalance(employeeId, organizationId);
+    if (!compOffBalance) {
+      return nextBalances;
+    }
+
+    const compensationBalance = {
+      id: `comp-${compOffBalance.employee_id || employeeId}`,
+      employee_id: employeeId,
+      leave_type: "compensation",
+      used_days: Number(compOffBalance.used_count || 0),
+      balance: Number(compOffBalance.available_balance || 0),
+      accrued_balance: Number(compOffBalance.available_balance || 0),
+      pending_days: Number(compOffBalance.pending_days || 0),
+      updated_at: null,
+    };
+
+    const existingIndex = nextBalances.findIndex(
+      (item) => item.leave_type === "compensation"
+    );
+
+    if (existingIndex >= 0) {
+      nextBalances[existingIndex] = compensationBalance;
+    } else {
+      nextBalances.push(compensationBalance);
+    }
+  } catch (error) {
+    console.error(
+      `Comp off balance sync failed for employee ${employeeId}:`,
+      error.message
+    );
+  }
+
+  return nextBalances;
 };
 
 const getLeaveTypesForBalance = (leaveType) =>
@@ -243,9 +339,77 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId,type = 'earned', dat
   };
 };
 
+const getOrganizationLeaveBalanceReport = async (organizationId) => {
+  const employeeResult = await pool.query(
+    `
+      SELECT
+        e.id AS employee_id,
+        e.name AS employee_name,
+        e.email,
+        e.role,
+        COALESCE(e.status, 'active') AS status
+      FROM employees e
+      WHERE e.organization_id = $1
+        AND COALESCE(e.status, 'active') = 'active'
+      ORDER BY
+        CASE WHEN LOWER(e.role) = 'admin' THEN 0 ELSE 1 END,
+        e.name ASC
+    `,
+    [organizationId]
+  );
+
+  const report = await Promise.all(
+    employeeResult.rows.map(async (employee) => {
+      try {
+        await syncEarnedLeaveBalanceForEmployee(employee.employee_id, "earned");
+      } catch (syncErr) {
+        console.error(
+          `Earned leave sync failed for employee ${employee.employee_id}:`,
+          syncErr.message
+        );
+      }
+
+      try {
+        await syncEarnedLeaveBalanceForEmployee(employee.employee_id, "casual");
+      } catch (syncErr) {
+        console.error(
+          `Casual leave sync failed for employee ${employee.employee_id}:`,
+          syncErr.message
+        );
+      }
+
+      const balances = await mergeCompOffIntoBalances(
+        employee.employee_id,
+        organizationId,
+        await getEmployeeLeaveBalances(employee.employee_id)
+      );
+
+      const balanceMap = balances.reduce((acc, balance) => {
+        acc[balance.leave_type] = {
+          leave_type: balance.leave_type,
+          balance: Number(balance.balance || 0),
+          accrued_balance: Number(balance.accrued_balance ?? balance.balance ?? 0),
+          used_days: Number(balance.used_days || 0),
+          pending_days: Number(balance.pending_days || 0),
+        };
+        return acc;
+      }, {});
+
+      return {
+        ...employee,
+        balances,
+        balances_by_type: balanceMap,
+      };
+    })
+  );
+
+  return report;
+};
+
 module.exports = {
   getEmployeeLeaveBalances,
   getEmployeeLeaveBalanceByType,
   upsertEmployeeLeaveBalance,
   syncEarnedLeaveBalanceForEmployee,
+  getOrganizationLeaveBalanceReport,
 };

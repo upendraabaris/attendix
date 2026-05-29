@@ -3,6 +3,7 @@ const { sendNewLeaveRequestEmail, sendLeaveStatusEmail } = require("../services/
 const { validateLeaveRequestAgainstPolicy } = require("../services/leavePolicyService");
 const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
 const { getEmployeeLeaveBalances } = require("../services/leaveBalanceService");
+const { getOrganizationLeaveBalanceReport } = require("../services/leaveBalanceService");
 const { uploadToS3 } = require("../services/s3Uploader");
 
 const getRequestedDays = (startDate, endDate) =>
@@ -354,6 +355,42 @@ const getMyLeaveBalances = async (req, res) => {
   }
 };
 
+const getOrganizationLeaveBalanceReportCtrl = async (req, res) => {
+  const organizationId = req.user.organization_id;
+  const role = String(req.user.role || "").toLowerCase();
+
+  if (!role.includes("admin")) {
+    return res.status(403).json({
+      statusCode: 403,
+      message: "Forbidden: admin access required",
+    });
+  }
+
+  if (!organizationId) {
+    return res.status(400).json({
+      statusCode: 400,
+      message: "Organization ID missing in token",
+    });
+  }
+
+  try {
+    const report = await getOrganizationLeaveBalanceReport(organizationId);
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Leave balance report retrieved successfully",
+      data: report,
+    });
+  } catch (error) {
+    console.error("Error retrieving organization leave balance report:", error);
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to retrieve leave balance report",
+      error: error.message,
+    });
+  }
+};
+
 /**
  * Get leave requests for a specific employee (admin only)
  * @param {Object} req - Express request object
@@ -597,6 +634,7 @@ module.exports = {
   createLeaveRequest,
   getMyLeaveRequests,
   getMyLeaveBalances,
+  getOrganizationLeaveBalanceReportCtrl,
   getEmployeeLeaveRequests,
   getAllLeaveRequests,
   getPendingLeaveRequests,

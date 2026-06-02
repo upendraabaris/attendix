@@ -8,7 +8,28 @@ const cors = require("cors");
 const { attachChatSocket } = require("./services/chatSocketService");
 
 const app = express();
-app.use(cors());
+
+const allowedOrigins = String(process.env.ALLOWED_ORIGIN || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const isOriginAllowed = (origin) =>
+  !origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin);
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (isOriginAllowed(origin)) {
+      return callback(null, true);
+    }
+
+    console.error("Blocked CORS origin:", origin);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
@@ -21,10 +42,21 @@ pool.query("SELECT NOW()", (err, result) => {
 const server = http.createServer(app);
 
 const io = new Server(server, {
+  path: "/api/socket.io",
   cors: {
-    origin: process.env.ALLOWED_ORIGIN,
+    origin(origin, callback) {
+      if (isOriginAllowed(origin)) {
+        return callback(null, true);
+      }
+
+      console.error("Blocked socket origin:", origin);
+      return callback(new Error("Not allowed by CORS"));
+    },
     methods: ["GET", "POST"],
+    credentials: true,
   },
+  transports: ["websocket", "polling"],
+  allowUpgrades: true,
 });
 
 attachChatSocket(io);
@@ -72,6 +104,8 @@ app.get("/", (_req, res) => res.send("Hello world"));
 const PORT = process.env.APP_PORT || 4000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log("Allowed HTTP/socket origins:", allowedOrigins.length ? allowedOrigins : ["*"]);
+  console.log("Socket.IO path:", "/api/socket.io");
 });
 
 startAutoAbsentScheduler();

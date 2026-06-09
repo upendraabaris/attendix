@@ -1,5 +1,6 @@
 const pool = require("../configure/dbConfig");
 const { syncEarnedLeaveBalanceForEmployee } = require("./leaveBalanceService");
+const { getLeaveCycle } = require("./leaveCycleHelper");
 
 const SUPPORTED_LEAVE_TYPES = ["sick", "personal", "other", "earned", "casual", "compensation", "paternity", "vacation", "unpaid"];
 const COMP_OFF_LEAVE_TYPES = ["compensation", "comp_off"];
@@ -286,7 +287,8 @@ const validateLeaveRequestAgainstPolicy = async ({
     `
       SELECT
         lp.*,
-        e.organization_id
+        e.organization_id,
+        e.created_at AS joining_date
       FROM employees e
       LEFT JOIN leave_policies lp
         ON lp.organization_id = e.organization_id
@@ -386,9 +388,10 @@ const validateLeaveRequestAgainstPolicy = async ({
     return;
   }
 
-  const year = new Date(startDate).getUTCFullYear();
-  const yearStart = `${year}-01-01`;
-  const yearEnd = `${year}-12-31`;
+  const { start: cycleStart, end: cycleEnd } = getLeaveCycle(
+    policy.joining_date,
+    startDate
+  );
 
   const usageResult = await pool.query(
     `
@@ -404,7 +407,7 @@ const validateLeaveRequestAgainstPolicy = async ({
         AND lr.start_date <= $4::date
         AND lr.end_date >= $3::date
     `,
-    [employeeId, leaveTypesForBalance, yearStart, yearEnd]
+    [employeeId, leaveTypesForBalance, cycleStart, cycleEnd]
   );
 
   const usedDays = Number(usageResult.rows[0]?.used_days || 0);

@@ -1,5 +1,6 @@
 const pool = require("../configure/dbConfig");
 const { getCompOffBalance } = require("./compOffService");
+const { getLeaveCycle } = require("./leaveCycleHelper");
 
 // const getEmployeeLeaveBalances = async (employeeId) => {
 //   const result = await pool.query(
@@ -30,7 +31,24 @@ const { getCompOffBalance } = require("./compOffService");
 //   return balances;
 // };
 
+const getEmployeeJoiningDate = async (employeeId) => {
+  const result = await pool.query(
+    `
+      SELECT created_at AS joining_date
+      FROM employees
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [employeeId]
+  );
+
+  return result.rows[0]?.joining_date || null;
+};
+
 const getEmployeeLeaveBalances = async (employeeId) => {
+  const joiningDate = await getEmployeeJoiningDate(employeeId);
+  const { start: cycleStart, end: cycleEnd } = getLeaveCycle(joiningDate);
+
   // 
 //   const result = await pool.query(
 //   `
@@ -73,7 +91,13 @@ const result = await pool.query(
 
     $1 AS employee_id,
 
-    COALESCE(used_data.used_days, 0) AS used_days,
+    COALESCE(
+      CASE
+        WHEN lp.leave_type IN ('earned', 'casual') THEN elb.used_days
+        ELSE used_data.used_days
+      END,
+      0
+    ) AS used_days,
 
     CASE
       WHEN lp.leave_type IN ('earned', 'casual')
@@ -100,7 +124,9 @@ const result = await pool.query(
       SUM(
         CASE
           WHEN lr.is_half_day THEN 0.5
-          ELSE (lr.end_date - lr.start_date + 1)
+          ELSE (
+            LEAST(lr.end_date, $3::date) - GREATEST(lr.start_date, $2::date) + 1
+          )
         END
       ) AS used_days
 
@@ -108,6 +134,9 @@ const result = await pool.query(
 
     WHERE lr.employee_id = $1
       AND lr.status = 'approved'
+      AND lr.type NOT IN ('earned', 'casual', 'vacation')
+      AND lr.start_date <= $3::date
+      AND lr.end_date >= $2::date
 
     GROUP BY lr.type
   ) used_data
@@ -122,7 +151,7 @@ const result = await pool.query(
 
   ORDER BY lp.leave_type
   `,
-  [employeeId]
+  [employeeId, cycleStart, cycleEnd]
 );
 
   // const balances = await Promise.all(

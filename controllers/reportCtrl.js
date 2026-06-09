@@ -257,4 +257,106 @@ const generateAttendanceReport = async (req, res) => {
     }
 };
 
-module.exports = { generateAttendanceReport };
+/**
+ * Returns date-wise breakdown for a specific employee:
+ * - extraDays: dates when employee worked on weekends/holidays
+ * - leaves: leave dates with type
+ * - unpaidLeaves: unpaid leave dates
+ * - holidays: organization holiday dates in range
+ */
+const getEmployeeReportDetails = async (req, res) => {
+    const { employeeId, startDate, endDate } = req.query;
+    const organizationId = req.user.organization_id;
+
+    if (!employeeId || !startDate || !endDate) {
+        return res.status(400).json({ statusCode: 400, message: "employeeId, startDate, endDate are required" });
+    }
+
+    try {
+        const policy = await getWorkWeekPolicyByOrganization(organizationId);
+
+        // Fetch holidays in range
+        const holidaysResult = await pool.query(
+            `SELECT holiday_date::text as date, holiday_name as name 
+             FROM holidays 
+             WHERE organization_id = $1 AND holiday_date BETWEEN $2 AND $3
+             ORDER BY holiday_date`,
+            [organizationId, startDate, endDate]
+        );
+        const holidayDates = new Set(holidaysResult.rows.map(h => h.date));
+        const holidayList = holidaysResult.rows; // [{date, name}]
+
+        // Fetch attendance dates for employee (only where both in & out exist)
+        const attendanceResult = await pool.query(
+            `SELECT DATE(a.timestamp)::text as work_date
+             FROM attendance a
+             WHERE a.employee_id = $1
+               AND DATE(a.timestamp) BETWEEN $2 AND $3
+             GROUP BY DATE(a.timestamp)
+             HAVING 
+                COUNT(CASE WHEN a.type = 'in' THEN 1 END) > 0
+                AND COUNT(CASE WHEN a.type = 'out' THEN 1 END) > 0`,
+            [employeeId, startDate, endDate]
+        );
+        const attendanceDates = new Set(attendanceResult.rows.map(r => r.work_date));
+
+        // Extra days = attendance on weekend or holiday
+        const extraDays = [];
+        attendanceDates.forEach(dateStr => {
+            const d = new Date(dateStr);
+            const isWeekend = isWeekendByPolicy(d, policy);
+            const isHoliday = holidayDates.has(dateStr);
+            if (isWeekend || isHoliday) {
+                extraDays.push({
+                    date: dateStr,
+                    reason: isWeekend ? (d.getDay() === 0 ? "Sunday" : "Saturday Off") : "Holiday"
+                });
+            }
+        });
+        extraDays.sort((a, b) => a.date.localeCompare(b.date));
+
+        // Fetch approved leave requests for employee in range
+        const leavesResult = await pool.query(
+            `SELECT start_date, end_date, type, reason
+             FROM leave_requests
+             WHERE employee_id = $1
+               AND status = 'approved'
+               AND (start_date <= $3 AND end_date >= $2)
+             ORDER BY start_date`,
+            [employeeId, startDate, endDate]
+        );
+
+        // Expand leave ranges into individual dates
+        const leaveDates = [];
+        const unpaidLeaveDates = [];
+
+        leavesResult.rows.forEach(row => {
+            const overlapStart = new Date(Math.max(new Date(startDate), new Date(row.start_date)));
+            const overlapEnd = new Date(Math.min(new Date(endDate), new Date(row.end_date)));
+            for (let d = new Date(overlapStart); d <= overlapEnd; d.setDate(d.getDate() + 1)) {
+                const dateStr = toDateString(d);
+                leaveDates.push({ date: dateStr, type: row.type || "Leave", reason: row.reason || "" });
+                if (row.type?.trim().toLowerCase() === 'unpaid') {
+                    unpaidLeaveDates.push({ date: dateStr, type: "Unpaid Leave", reason: row.reason || "" });
+                }
+            }
+        });
+
+        res.status(200).json({
+            statusCode: 200,
+            message: "Employee report details fetched successfully",
+            data: {
+                extraDays,
+                leaves: leaveDates,
+                unpaidLeaves: unpaidLeaveDates,
+                holidays: holidayList
+            }
+        });
+
+    } catch (error) {
+        console.error("Employee Report Details Error:", error);
+        res.status(500).json({ statusCode: 500, message: "Failed to fetch employee report details", error: error.message });
+    }
+};
+
+module.exports = { generateAttendanceReport, getEmployeeReportDetails };

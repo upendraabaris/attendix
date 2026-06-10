@@ -6,7 +6,8 @@ const {
   getEmployeeAttendance,
   getAllAttendance,
   getAttendanceByAdmin,
-  getParticularAttendance
+  getParticularAttendance,
+  adminUpdateClockOut
 } = require("../controllers/attendanceCtrl");
 
 const { authenticate, authorizeRoles } = require("../middleware/authMiddleware");
@@ -38,6 +39,13 @@ router.get('/admin/all-employee-attendance', authenticate, authorizeRoles('admin
 router.post('/admin/get-single-attendance', authenticate, authorizeRoles('admin'), getAttendanceByAdmin);
 
 router.get('/admin/get-particular-attendance', authenticate, getParticularAttendance);
+
+/**
+ * @route POST /api/attendance/admin/update-clockout
+ * @desc Admin manually adds a missing clock-out with time and remark
+ * @access Private (Admin)
+ */
+router.post('/admin/update-clockout', authenticate, authorizeRoles('admin'), adminUpdateClockOut);
 
 module.exports = router;
 

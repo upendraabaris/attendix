@@ -207,6 +207,47 @@ const getAllAttendance = async (req, res) => {
       [empId, start, end, orgId]
     );
 
+    // ─── Fetch admin_remark directly from attendance table ───────────────────
+    // get_combined_attendance is a stored function created before admin_remark
+    // column was added, so it doesn't return it. We fetch it separately.
+    let remarkMap = {}; // key: "YYYY-MM-DD-employeeId", value: admin_remark
+
+    try {
+      const remarkQuery = empId > 0
+        ? `SELECT 
+             employee_id,
+             DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::text AS work_date,
+             admin_remark
+           FROM attendance
+           WHERE type = 'out'
+             AND admin_remark IS NOT NULL
+             AND employee_id = $1
+             AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3`
+        : `SELECT 
+             a.employee_id,
+             DATE(a.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::text AS work_date,
+             a.admin_remark
+           FROM attendance a
+           JOIN employees e ON a.employee_id = e.id
+           WHERE a.type = 'out'
+             AND a.admin_remark IS NOT NULL
+             AND e.organization_id = $1
+             AND DATE(a.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3`;
+
+      const remarkParams = empId > 0
+        ? [empId, start, end]
+        : [orgId, start, end];
+
+      const remarkResult = await pool.query(remarkQuery, remarkParams);
+      remarkResult.rows.forEach(r => {
+        remarkMap[`${r.work_date}-${r.employee_id}`] = r.admin_remark;
+      });
+    } catch (remarkErr) {
+      // If admin_remark column doesn't exist yet, silently ignore
+      console.warn('Could not fetch admin_remark (column may not exist yet):', remarkErr.message);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const updatedRows = result.rows.map((row) => {
       const inTime = row.clock_in ? new Date(new Date(row.clock_in).getTime() + 330 * 60 * 1000) : null;
       const outTime = row.clock_out ? new Date(new Date(row.clock_out).getTime() + 330 * 60 * 1000) : null;
@@ -224,6 +265,10 @@ const getAllAttendance = async (req, res) => {
         }
       }
 
+      const dateStr = inTime?.toISOString().split('T')[0] || null;
+      const empIdForRow = row.employee_id || empId;
+      const adminRemark = dateStr ? (remarkMap[`${dateStr}-${empIdForRow}`] || null) : null;
+
       return {
         ...row,
         clock_in: inTime?.toLocaleTimeString('en-IN', {
@@ -237,7 +282,8 @@ const getAllAttendance = async (req, res) => {
           hour12: true
         }),
         worked_time: workedTime,
-        date: inTime?.toISOString().split('T')[0] || null
+        date: dateStr,
+        admin_remark: adminRemark
       };
     });
 
@@ -377,6 +423,97 @@ const getParticularAttendance = async (req, res) => {
 
 
 
+/**
+ * Admin can manually set a clock-out time + remark for a missing clock-out
+ * Body: { employeeId, workDate (YYYY-MM-DD), clockOutTime (HH:MM), remark }
+ */
+const adminUpdateClockOut = async (req, res) => {
+  const { employeeId, workDate, clockOutTime, remark } = req.body;
+  const organizationId = req.user.organization_id;
+
+  if (!employeeId || !workDate || !clockOutTime) {
+    return res.status(400).json({
+      statusCode: 400,
+      message: 'employeeId, workDate, and clockOutTime are required'
+    });
+  }
+
+  try {
+    // Verify employee belongs to this organization
+    const empCheck = await pool.query(
+      `SELECT id FROM employees WHERE id = $1 AND organization_id = $2`,
+      [employeeId, organizationId]
+    );
+    if (empCheck.rows.length === 0) {
+      return res.status(403).json({ statusCode: 403, message: 'Employee not found in your organization' });
+    }
+
+    // Check if a clock-in exists for this date
+    const clockInCheck = await pool.query(
+      `SELECT id FROM attendance 
+       WHERE employee_id = $1 
+         AND type = 'in' 
+         AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') = $2`,
+      [employeeId, workDate]
+    );
+    if (clockInCheck.rows.length === 0) {
+      return res.status(400).json({ statusCode: 400, message: 'No clock-in record found for this date' });
+    }
+
+    // Check if clock-out already exists for this date
+    const clockOutCheck = await pool.query(
+      `SELECT id FROM attendance 
+       WHERE employee_id = $1 
+         AND type = 'out' 
+         AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') = $2`,
+      [employeeId, workDate]
+    );
+    if (clockOutCheck.rows.length > 0) {
+      return res.status(409).json({ statusCode: 409, message: 'Clock-out already exists for this date' });
+    }
+
+    // Build the timestamp: combine workDate + clockOutTime in IST, then convert to UTC for storage
+    // clockOutTime format: "HH:MM"
+    const [hours, minutes] = clockOutTime.split(':').map(Number);
+    // Create a date in IST (UTC+5:30 = 330 min ahead)
+    const istDate = new Date(`${workDate}T${clockOutTime}:00+05:30`);
+
+    // Insert the clock-out record
+    await pool.query(
+      `INSERT INTO attendance (employee_id, type, timestamp, latitude, longitude, address, admin_remark)
+       VALUES ($1, 'out', $2, 0, 0, 'Admin Updated', $3)`,
+      [employeeId, istDate.toISOString(), remark || null]
+    );
+
+    res.status(200).json({
+      statusCode: 200,
+      message: 'Clock-out updated successfully by admin'
+    });
+  } catch (error) {
+    // If admin_remark column doesn't exist, try without it
+    if (error.message && error.message.includes('admin_remark')) {
+      try {
+        const [, ] = clockOutTime.split(':').map(Number);
+        const istDate = new Date(`${workDate}T${clockOutTime}:00+05:30`);
+        await pool.query(
+          `INSERT INTO attendance (employee_id, type, timestamp, latitude, longitude, address)
+           VALUES ($1, 'out', $2, 0, 0, $3)`,
+          [employeeId, istDate.toISOString(), remark ? `Admin Updated | Remark: ${remark}` : 'Admin Updated']
+        );
+        return res.status(200).json({
+          statusCode: 200,
+          message: 'Clock-out updated successfully by admin'
+        });
+      } catch (innerError) {
+        console.error('Admin Clock-Out Update Error (fallback):', innerError);
+        return res.status(500).json({ statusCode: 500, message: 'Failed to update clock-out', error: innerError.message });
+      }
+    }
+    console.error('Admin Clock-Out Update Error:', error);
+    res.status(500).json({ statusCode: 500, message: 'Failed to update clock-out', error: error.message });
+  }
+};
+
 module.exports = {
   clockIn,
   clockOut,
@@ -384,5 +521,6 @@ module.exports = {
   getEmployeeAttendance,
   getAllAttendance,
   getAttendanceByAdmin,
-  getParticularAttendance
+  getParticularAttendance,
+  adminUpdateClockOut
 };

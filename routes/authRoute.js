@@ -10,7 +10,9 @@ const {
   loginAdminDashboard,
   loginEmployeeDashboard,
   loginSupportDashboard,
-  changePassword
+  changePassword,
+  getOrganizationSettings,
+  updateOrganizationSettings,
 } = require("../controllers/authCtrl");
 
 // Admin login with email + password
@@ -36,6 +38,10 @@ router.post('/employee/login/web', loginEmployeeDashboard);
 
 // Change password (authenticated user only)
 router.post('/change-password', authenticate, changePassword);
+
+// Organization Settings (admin only)
+router.get('/organization-settings', authenticate, getOrganizationSettings);
+router.put('/organization-settings', authenticate, updateOrganizationSettings);
 
 
 

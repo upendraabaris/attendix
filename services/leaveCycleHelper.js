@@ -6,16 +6,34 @@ const formatDateUTC = (date) => {
 };
 
 /**
- * Returns the leave cycle for an employee based on joining date (DOJ).
- * Cycle runs from DOJ anniversary (inclusive) to the day before the next anniversary.
+ * Returns the leave cycle start and end dates based on renewalType.
  *
- * Example: DOJ 15 Mar 2023, reference 20 Jan 2026 -> 15 Mar 2025 to 14 Mar 2026
+ * @param {string|Date|null} joiningDate   - Employee's joining date (used when renewalType is 'date_of_joining')
+ * @param {string|Date}      referenceDate - The date to calculate cycle for (default: today)
+ * @param {string}           renewalType   - 'date_of_joining' (default) | 'calendar_year'
+ *
+ * renewalType = 'calendar_year':
+ *   Always returns Jan 1 – Dec 31 of the reference year.
+ *   Example: reference 20 Jan 2026 -> { start: "2026-01-01", end: "2026-12-31" }
+ *
+ * renewalType = 'date_of_joining' (default):
+ *   Cycle runs from DOJ anniversary to the day before the next anniversary.
+ *   Example: DOJ 15 Mar 2023, reference 20 Jan 2026 -> { start: "2025-03-15", end: "2026-03-14" }
  */
-const getLeaveCycle = (joiningDate, referenceDate = new Date()) => {
+const getLeaveCycle = (joiningDate, referenceDate = new Date(), renewalType = "date_of_joining") => {
   const reference = new Date(referenceDate);
+  const year = Number.isNaN(reference.getUTCFullYear()) ? new Date().getUTCFullYear() : reference.getUTCFullYear();
 
+  // Calendar year mode — fixed Jan 1 to Dec 31
+  if (renewalType === "calendar_year") {
+    return {
+      start: `${year}-01-01`,
+      end: `${year}-12-31`,
+    };
+  }
+
+  // Date of joining mode — DOJ anniversary cycle
   if (!joiningDate) {
-    const year = reference.getUTCFullYear();
     return {
       start: `${year}-01-01`,
       end: `${year}-12-31`,
@@ -24,7 +42,6 @@ const getLeaveCycle = (joiningDate, referenceDate = new Date()) => {
 
   const join = new Date(joiningDate);
   if (Number.isNaN(join.getTime()) || Number.isNaN(reference.getTime())) {
-    const year = reference.getUTCFullYear();
     return {
       start: `${year}-01-01`,
       end: `${year}-12-31`,

@@ -31,23 +31,29 @@ const { getLeaveCycle } = require("./leaveCycleHelper");
 //   return balances;
 // };
 
-const getEmployeeJoiningDate = async (employeeId) => {
+const getEmployeeOrgInfo = async (employeeId) => {
   const result = await pool.query(
     `
-      SELECT created_at AS joining_date
-      FROM employees
-      WHERE id = $1
+      SELECT
+        e.created_at AS joining_date,
+        COALESCE(o.leave_renewal_type, 'date_of_joining') AS leave_renewal_type
+      FROM employees e
+      LEFT JOIN organizations o ON o.id = e.organization_id
+      WHERE e.id = $1
       LIMIT 1
     `,
     [employeeId]
   );
 
-  return result.rows[0]?.joining_date || null;
+  return {
+    joiningDate: result.rows[0]?.joining_date || null,
+    renewalType: result.rows[0]?.leave_renewal_type || "date_of_joining",
+  };
 };
 
 const getEmployeeLeaveBalances = async (employeeId) => {
-  const joiningDate = await getEmployeeJoiningDate(employeeId);
-  const { start: cycleStart, end: cycleEnd } = getLeaveCycle(joiningDate);
+  const { joiningDate, renewalType } = await getEmployeeOrgInfo(employeeId);
+  const { start: cycleStart, end: cycleEnd } = getLeaveCycle(joiningDate, new Date(), renewalType);
 
   // 
 //   const result = await pool.query(
@@ -324,9 +330,7 @@ const getCompletedAccrualMonths = (date, joinedAt) => {
   return Math.max(completedMonths, 0);
 };
 
-const getPresentWorkingDays = async (employeeId, year) => {
-  const { start, end } = getYearBounds(year);
-
+const getPresentWorkingDays = async (employeeId, cycleStart, cycleEnd) => {
   const result = await pool.query(
     `
       SELECT COUNT(distinct a.date)::int AS present_days
@@ -334,13 +338,13 @@ const getPresentWorkingDays = async (employeeId, year) => {
       WHERE a.clock_in IS NOT NULL
         AND a.clock_out IS NOT NULL
     `,
-    [employeeId, start, end]
+    [employeeId, cycleStart, cycleEnd]
   );
 
   return Number(result.rows[0]?.present_days || 0);
 };
 
-const getEarnedPolicyForEmployee = async (employeeId,type) => {
+const getEarnedPolicyForEmployee = async (employeeId, type) => {
   const result = await pool.query(
     `
       SELECT
@@ -350,22 +354,23 @@ const getEarnedPolicyForEmployee = async (employeeId,type) => {
         lp.yearly_limit,
         lp.earned_days_required,
         lp.earned_leave_award,
-        e.created_at AS employee_created_at
+        e.created_at AS employee_created_at,
+        COALESCE(o.leave_renewal_type, 'date_of_joining') AS leave_renewal_type
       FROM employees e
       JOIN leave_policies lp
         ON lp.organization_id = e.organization_id
+      LEFT JOIN organizations o ON o.id = e.organization_id
       WHERE e.id = $1
         AND lp.leave_type = $2
       LIMIT 1
     `,
-    [employeeId,type]
+    [employeeId, type]
   );
 
   return result.rows[0] || null;
 };
 
-const getConsumedEarnedLeaveDays = async (employeeId, year,type) => {
-  const { start, end } = getYearBounds(year);
+const getConsumedEarnedLeaveDays = async (employeeId, cycleStart, cycleEnd, type) => {
   const consumedTypes = type === "earned" ? ["earned", "vacation"] : [type];
   const result = await pool.query(
     `
@@ -381,15 +386,14 @@ const getConsumedEarnedLeaveDays = async (employeeId, year,type) => {
         AND lr.start_date <= $3::date
         AND lr.end_date >= $2::date
     `,
-    [employeeId, start, end, consumedTypes]
+    [employeeId, cycleStart, cycleEnd, consumedTypes]
   );
 
   return Number(result.rows[0]?.consumed_days || 0);
 };
 
-const syncEarnedLeaveBalanceForEmployee = async (employeeId,type = 'earned', date = new Date()) => {
-  const year = date.getUTCFullYear();
-  const policy = await getEarnedPolicyForEmployee(employeeId,type);
+const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', date = new Date()) => {
+  const policy = await getEarnedPolicyForEmployee(employeeId, type);
 
   if (
     !policy ||
@@ -404,7 +408,16 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId,type = 'earned', dat
     };
   }
 
-  const consumedEarnedDays = await getConsumedEarnedLeaveDays(employeeId, year,type);
+  const renewalType = policy.leave_renewal_type || "date_of_joining";
+
+  // Compute cycle bounds based on renewal type
+  const { start: cycleStart, end: cycleEnd } = getLeaveCycle(
+    policy.employee_created_at,  // joining date for DOJ mode
+    date,
+    renewalType
+  );
+
+  const consumedEarnedDays = await getConsumedEarnedLeaveDays(employeeId, cycleStart, cycleEnd, type);
 
   let presentDays = null;
   let totalEarnedCredits = 0;
@@ -420,7 +433,8 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId,type = 'earned', dat
       EARNED_LEAVE_CARRY_FORWARD_LIMIT
     );
   } else {
-    presentDays = await getPresentWorkingDays(employeeId, year);
+    // casual — count present working days within the leave cycle
+    presentDays = await getPresentWorkingDays(employeeId, cycleStart, cycleEnd);
     totalEarnedCredits =
       Math.floor(presentDays / Number(policy.earned_days_required)) *
       Number(policy.earned_leave_award);

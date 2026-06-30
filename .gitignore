@@ -3,3 +3,5 @@ node_modules
 ./configure/dbConfigserviceAccountKey.json
 .DS_Store
 migrations/
+run_migration.js
+db_query.js

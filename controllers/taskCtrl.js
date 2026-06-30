@@ -467,6 +467,13 @@ const getAllEmployeesTasks = async (req, res) => {
         recurrence_type: task.recurrence_type || "none",
         recurrence_days: task.recurrence_days || null,
         recurrence_end_date: formatDate(task.recurrence_end_date),
+        hours_worked: task.hours_worked || 0,
+        task_type: task.task_type || 'daily',
+        master_task_id: task.master_task_id || null,
+        kpi: task.kpi || null,
+        target_val: task.target_val || null,
+        actual_result: task.actual_result || null,
+        remark: task.remark || null,
       });
     }
 
@@ -616,6 +623,80 @@ const deleteTask = async (req, res) => {
   }
 };
 
+const quickAddTask = async (req, res) => {
+  const { title, hours_worked, date, workspace_id, master_task_id, employee_id, workspace_name, task_type, kpi, target_val, actual_result, remark } = req.body;
+  const adminOrEmpId = req.user.employee_id; 
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO tasks (
+         title, hours_worked, due_date, workspace_id, master_task_id, employee_id, workspace_name, status, completed,
+         task_type, kpi, target_val, actual_result, remark
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed', true, $8, $9, $10, $11, $12)
+       RETURNING *`,
+      [
+        title,
+        hours_worked || 0,
+        date || new Date().toISOString().split("T")[0],
+        workspace_id || null,
+        master_task_id || null,
+        employee_id || adminOrEmpId,
+        workspace_name || null,
+        task_type || 'daily',
+        kpi || null,
+        target_val || null,
+        actual_result || null,
+        remark || null
+      ]
+    );
+
+    return res.status(201).json({
+      statusCode: 201,
+      message: "Task quickly logged",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Error in quick add task:", error);
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to quick log task",
+      error: error.message,
+    });
+  }
+};
+
+const updateTaskLogInline = async (req, res) => {
+  const { taskId, hours_worked, kpi, target_val, actual_result, remark } = req.body;
+  
+  try {
+    const result = await pool.query(
+      `UPDATE tasks 
+       SET hours_worked = COALESCE($1, hours_worked),
+           kpi = COALESCE($2, kpi),
+           target_val = COALESCE($3, target_val),
+           actual_result = COALESCE($4, actual_result),
+           remark = COALESCE($5, remark),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $6
+       RETURNING *`,
+      [hours_worked, kpi, target_val, actual_result, remark, taskId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ statusCode: 404, message: "Task not found" });
+    }
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Task updated successfully",
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error("Error updating inline task log:", error);
+    return res.status(500).json({ statusCode: 500, message: "Failed to update task", error: error.message });
+  }
+};
+
 module.exports = {
   createTask,
   getMyTasks,
@@ -623,4 +704,70 @@ module.exports = {
   getAllEmployeesTasks,
   assignTask,
   deleteTask,
+  quickAddTask,
+  updateTaskLogInline,
 };
+
+const getFilteredWorkspaceTasks = async (req, res) => {
+  const { workspace_id, employee_id, start_date, end_date, sort_by } = req.query;
+  const organizationId = req.user?.organization_id;
+
+  if (!workspace_id || !organizationId) {
+    return res.status(400).json({ message: "Missing required parameters" });
+  }
+
+  try {
+    let query = `
+      SELECT t.*, e.name as employee_name
+      FROM tasks t
+      LEFT JOIN employees e ON t.employee_id = e.id
+      WHERE t.workspace_id = $1 AND e.organization_id = $2
+    `;
+    const values = [workspace_id, organizationId];
+    let paramIndex = 3;
+
+    if (employee_id && employee_id !== 'all') {
+      query += ` AND t.employee_id = $${paramIndex}`;
+      values.push(employee_id);
+      paramIndex++;
+    }
+
+    if (start_date) {
+      query += ` AND t.due_date >= $${paramIndex}`;
+      values.push(start_date);
+      paramIndex++;
+    }
+
+    if (end_date) {
+      query += ` AND t.due_date <= $${paramIndex}`;
+      values.push(end_date);
+      paramIndex++;
+    }
+
+    if (sort_by === 'newest') {
+      query += ` ORDER BY t.created_at DESC`;
+    } else if (sort_by === 'oldest') {
+      query += ` ORDER BY t.created_at ASC`;
+    } else if (sort_by === 'hours_high') {
+      query += ` ORDER BY t.hours_worked DESC NULLS LAST, t.created_at DESC`;
+    } else if (sort_by === 'hours_low') {
+      query += ` ORDER BY t.hours_worked ASC NULLS FIRST, t.created_at DESC`;
+    } else {
+      query += ` ORDER BY t.created_at DESC`;
+    }
+
+    const result = await pool.query(query, values);
+    
+    const formattedData = result.rows.map(task => ({
+        ...task,
+        task_id: task.id,
+    }));
+
+    res.status(200).json({ statusCode: 200, data: formattedData });
+  } catch (error) {
+    console.error("Error fetching filtered tasks:", error);
+    res.status(500).json({ message: "Failed to fetch filtered tasks", error: error.message });
+  }
+};
+
+module.exports.getFilteredWorkspaceTasks = getFilteredWorkspaceTasks;

@@ -7,14 +7,20 @@ const {
   getAllEmployeesTasks,
   assignTask,
   deleteTask,
+  quickAddTask,
+  updateTaskLogInline,
+  getFilteredWorkspaceTasks,
 } = require("../controllers/taskCtrl");
 const { authenticate } = require("../middleware/authMiddleware");
 
+router.get("/filter", authenticate, getFilteredWorkspaceTasks);
 router.post("/create", authenticate, createTask);
 router.get("/my", authenticate, getMyTasks);
 router.post("/update-status", authenticate, updateTaskStatus);
 router.get("/all", authenticate, getAllEmployeesTasks);
 router.post("/assignTask", authenticate, assignTask);
+router.post("/quick-add", authenticate, quickAddTask);
+router.post("/update-inline", authenticate, updateTaskLogInline);
 router.delete("/:taskId", authenticate, deleteTask);
 // ✅ New route to get employee-wise workspaces
 // router.get("/employees/workspaces", authenticate, getEmployeesWorkspaces);

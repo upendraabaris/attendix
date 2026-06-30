@@ -121,8 +121,9 @@ exports.getAllWorkspacesByEmployeeId = async (req, res) => {
     const result = await pool.query(
       `SELECT w.id, w.name, w.created_at
        FROM workspaces w
-       JOIN tasks t ON t.workspace_id = w.id
-       WHERE t.employee_id = $1 AND w.organization_id = $2
+       LEFT JOIN tasks t ON t.workspace_id = w.id AND t.employee_id = $1
+       LEFT JOIN master_tasks mt ON mt.workspace_id = w.id AND $1 = ANY(mt.assignees)
+       WHERE w.organization_id = $2 AND (t.employee_id IS NOT NULL OR mt.id IS NOT NULL)
        GROUP BY w.id, w.name, w.created_at
        ORDER BY w.id DESC`,
       [employee_id, organization_id]

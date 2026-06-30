@@ -288,11 +288,13 @@ const validateLeaveRequestAgainstPolicy = async ({
       SELECT
         lp.*,
         e.organization_id,
-        e.created_at AS joining_date
+        e.created_at AS joining_date,
+        COALESCE(o.leave_renewal_type, 'date_of_joining') AS leave_renewal_type
       FROM employees e
       LEFT JOIN leave_policies lp
         ON lp.organization_id = e.organization_id
        AND lp.leave_type = $2
+      LEFT JOIN organizations o ON o.id = e.organization_id
       WHERE e.id = $1
       LIMIT 1
     `,
@@ -388,9 +390,11 @@ const validateLeaveRequestAgainstPolicy = async ({
     return;
   }
 
+  const renewalType = policy.leave_renewal_type || "date_of_joining";
   const { start: cycleStart, end: cycleEnd } = getLeaveCycle(
     policy.joining_date,
-    startDate
+    startDate,
+    renewalType
   );
 
   const usageResult = await pool.query(

@@ -1,6 +1,7 @@
 const db = require('../configure/dbConfig'); // or your database connection file
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const { syncEarnedLeaveBalanceForEmployee } = require('../services/leaveBalanceService');
 
 // Admin login with email + password
 // Admin login with mobile + OTP (OTP verification assumed done)
@@ -524,6 +525,112 @@ const changePassword = async (req, res) => {
 };
 
 
+// ─── Organization Settings ───────────────────────────────────────────────────
+
+/**
+ * GET /admin/organization-settings
+ * Returns the current organization settings for the logged-in admin.
+ */
+const getOrganizationSettings = async (req, res) => {
+  const role = String(req.user?.role || "").toLowerCase();
+  if (!role.includes("admin")) {
+    return res.status(403).json({ statusCode: 403, message: "Forbidden: admin access required" });
+  }
+
+  const organizationId = req.user.organization_id;
+  if (!organizationId) {
+    return res.status(400).json({ statusCode: 400, message: "Organization ID missing in token" });
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT id, name, leave_renewal_type FROM organizations WHERE id = $1 LIMIT 1`,
+      [organizationId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ statusCode: 404, message: "Organization not found" });
+    }
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Organization settings retrieved successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Error fetching organization settings:", error.message);
+    return res.status(500).json({ statusCode: 500, message: "Failed to retrieve organization settings", error: error.message });
+  }
+};
+
+/**
+ * PUT /admin/organization-settings
+ * Updates organization-level settings. Currently supports: leave_renewal_type.
+ */
+const updateOrganizationSettings = async (req, res) => {
+  const role = String(req.user?.role || "").toLowerCase();
+  if (!role.includes("admin")) {
+    return res.status(403).json({ statusCode: 403, message: "Forbidden: admin access required" });
+  }
+
+  const organizationId = req.user.organization_id;
+  if (!organizationId) {
+    return res.status(400).json({ statusCode: 400, message: "Organization ID missing in token" });
+  }
+
+  const { leave_renewal_type } = req.body;
+  const VALID_RENEWAL_TYPES = ["date_of_joining", "calendar_year"];
+
+  if (!leave_renewal_type || !VALID_RENEWAL_TYPES.includes(leave_renewal_type)) {
+    return res.status(400).json({
+      statusCode: 400,
+      message: `leave_renewal_type must be one of: ${VALID_RENEWAL_TYPES.join(", ")}`
+    });
+  }
+
+  try {
+    const result = await db.query(
+      `UPDATE organizations SET leave_renewal_type = $1 WHERE id = $2 RETURNING id, name, leave_renewal_type`,
+      [leave_renewal_type, organizationId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ statusCode: 404, message: "Organization not found" });
+    }
+
+    // ── Background: re-sync all active employees' leave balances with new renewal type ──
+    // This runs asynchronously so it doesn't block the API response
+    setImmediate(async () => {
+      try {
+        const empResult = await db.query(
+          `SELECT id FROM employees WHERE organization_id = $1 AND COALESCE(status, 'active') = 'active'`,
+          [organizationId]
+        );
+        for (const emp of empResult.rows) {
+          try { await syncEarnedLeaveBalanceForEmployee(emp.id, 'earned'); } catch (e) {
+            console.error(`Renewal resync earned failed for emp ${emp.id}:`, e.message);
+          }
+          try { await syncEarnedLeaveBalanceForEmployee(emp.id, 'casual'); } catch (e) {
+            console.error(`Renewal resync casual failed for emp ${emp.id}:`, e.message);
+          }
+        }
+        console.log(`[OrgSettings] Leave balance re-sync complete for org ${organizationId} (renewal: ${leave_renewal_type})`);
+      } catch (syncErr) {
+        console.error(`[OrgSettings] Leave balance re-sync failed for org ${organizationId}:`, syncErr.message);
+      }
+    });
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Organization settings updated successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Error updating organization settings:", error.message);
+    return res.status(500).json({ statusCode: 500, message: "Failed to update organization settings", error: error.message });
+  }
+};
+
 module.exports = {
   loginAdmin,
   loginEmployee,
@@ -532,5 +639,7 @@ module.exports = {
   loginAdminDashboard,
   loginEmployeeDashboard,
   loginSupportDashboard,
-  changePassword
+  changePassword,
+  getOrganizationSettings,
+  updateOrganizationSettings,
 };

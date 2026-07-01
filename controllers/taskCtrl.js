@@ -624,15 +624,21 @@ const deleteTask = async (req, res) => {
 };
 
 const quickAddTask = async (req, res) => {
-  const { title, hours_worked, date, workspace_id, master_task_id, employee_id, workspace_name, task_type, kpi, target_val, actual_result, remark } = req.body;
-  const adminOrEmpId = req.user.employee_id; 
+  const { title, hours_worked, date, workspace_id, master_task_id, employee_id, workspace_name, task_type, kpi, target_val, actual_result, remark, status } = req.body;
+  const adminOrEmpId = req.user.employee_id;
+  const finalStatus = status || 'open';
+  const isCompleted = finalStatus === 'closed';
+
+  if (hours_worked !== undefined && Number(hours_worked) < 0) {
+    return res.status(400).json({ statusCode: 400, message: "Hours worked cannot be negative" });
+  }
 
   try {
     const result = await pool.query(
       `INSERT INTO tasks (
          title, hours_worked, due_date, workspace_id, master_task_id, employee_id, workspace_name, status, completed,
          task_type, kpi, target_val, actual_result, remark
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed', true, $8, $9, $10, $11, $12)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING *`,
       [
         title,
@@ -642,6 +648,8 @@ const quickAddTask = async (req, res) => {
         master_task_id || null,
         employee_id || adminOrEmpId,
         workspace_name || null,
+        finalStatus,
+        isCompleted,
         task_type || 'daily',
         kpi || null,
         target_val || null,
@@ -666,9 +674,27 @@ const quickAddTask = async (req, res) => {
 };
 
 const updateTaskLogInline = async (req, res) => {
-  const { taskId, hours_worked, kpi, target_val, actual_result, remark } = req.body;
+  const { taskId, hours_worked, kpi, target_val, actual_result, remark, status } = req.body;
+  const userEmpId = req.user?.employee_id;
+  const role = req.user?.role?.toLowerCase() || '';
+  const isAdmin = role.includes('admin');
   
+  if (hours_worked !== undefined && Number(hours_worked) < 0) {
+    return res.status(400).json({ statusCode: 400, message: "Hours worked cannot be negative" });
+  }
+
   try {
+    // Server-side authorization check
+    if (!isAdmin) {
+      const checkResult = await pool.query("SELECT employee_id FROM tasks WHERE id = $1", [taskId]);
+      if (checkResult.rowCount === 0) {
+        return res.status(404).json({ statusCode: 404, message: "Task not found" });
+      }
+      if (String(checkResult.rows[0].employee_id) !== String(userEmpId)) {
+        return res.status(403).json({ statusCode: 403, message: "Unauthorized to edit this task" });
+      }
+    }
+
     const result = await pool.query(
       `UPDATE tasks 
        SET hours_worked = COALESCE($1, hours_worked),
@@ -676,10 +702,12 @@ const updateTaskLogInline = async (req, res) => {
            target_val = COALESCE($3, target_val),
            actual_result = COALESCE($4, actual_result),
            remark = COALESCE($5, remark),
+           status = COALESCE($6, status),
+           completed = CASE WHEN COALESCE($6, status) = 'closed' THEN true ELSE completed END,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $6
+       WHERE id = $7
        RETURNING *`,
-      [hours_worked, kpi, target_val, actual_result, remark, taskId]
+      [hours_worked, kpi, target_val, actual_result, remark, status, taskId]
     );
 
     if (result.rowCount === 0) {
@@ -697,16 +725,7 @@ const updateTaskLogInline = async (req, res) => {
   }
 };
 
-module.exports = {
-  createTask,
-  getMyTasks,
-  updateTaskStatus,
-  getAllEmployeesTasks,
-  assignTask,
-  deleteTask,
-  quickAddTask,
-  updateTaskLogInline,
-};
+
 
 const getFilteredWorkspaceTasks = async (req, res) => {
   const { workspace_id, employee_id, start_date, end_date, sort_by } = req.query;
@@ -744,6 +763,18 @@ const getFilteredWorkspaceTasks = async (req, res) => {
       paramIndex++;
     }
 
+    if (req.query.status && req.query.status !== 'all') {
+      query += ` AND t.status = $${paramIndex}`;
+      values.push(req.query.status);
+      paramIndex++;
+    }
+
+    if (req.query.master_task_id && req.query.master_task_id !== 'all') {
+      query += ` AND t.master_task_id = $${paramIndex}`;
+      values.push(req.query.master_task_id);
+      paramIndex++;
+    }
+
     if (sort_by === 'newest') {
       query += ` ORDER BY t.created_at DESC`;
     } else if (sort_by === 'oldest') {
@@ -757,10 +788,10 @@ const getFilteredWorkspaceTasks = async (req, res) => {
     }
 
     const result = await pool.query(query, values);
-    
+
     const formattedData = result.rows.map(task => ({
-        ...task,
-        task_id: task.id,
+      ...task,
+      task_id: task.id,
     }));
 
     res.status(200).json({ statusCode: 200, data: formattedData });
@@ -770,4 +801,14 @@ const getFilteredWorkspaceTasks = async (req, res) => {
   }
 };
 
-module.exports.getFilteredWorkspaceTasks = getFilteredWorkspaceTasks;
+module.exports = {
+  createTask,
+  getMyTasks,
+  updateTaskStatus,
+  getAllEmployeesTasks,
+  assignTask,
+  deleteTask,
+  quickAddTask,
+  updateTaskLogInline,
+  getFilteredWorkspaceTasks,
+};

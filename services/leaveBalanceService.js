@@ -419,25 +419,28 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
 
   const consumedEarnedDays = await getConsumedEarnedLeaveDays(employeeId, cycleStart, cycleEnd, type);
 
-  let presentDays = null;
+  // Both 'earned' and 'casual' use the same working-days based accrual:
+  //   every earned_days_required working days → earned_leave_award leave days
+  // For 'earned': result is additionally capped by yearly_limit.
+  let presentDays = 0;
   let totalEarnedCredits = 0;
   let availableBalance = 0;
 
+  presentDays = await getPresentWorkingDays(employeeId, cycleStart, cycleEnd);
+  totalEarnedCredits =
+    Math.floor(presentDays / Number(policy.earned_days_required)) *
+    Number(policy.earned_leave_award);
+
   if (type === "earned") {
-    const annualLimit = Number(policy.yearly_limit || EARNED_LEAVE_ANNUAL_LIMIT);
-    const monthlyAward = Number(policy.earned_leave_award);
-    const accruedMonths = getCompletedAccrualMonths(date, policy.employee_created_at);
-    totalEarnedCredits = Math.min(accruedMonths * monthlyAward, annualLimit);
-    availableBalance = Math.min(
-      Math.max(totalEarnedCredits - consumedEarnedDays, 0),
-      EARNED_LEAVE_CARRY_FORWARD_LIMIT
-    );
+    const netBalance = Math.max(totalEarnedCredits - consumedEarnedDays, 0);
+    // yearly_limit > 0 means admin set an explicit cap (e.g. max 15 earned leaves/year)
+    // yearly_limit = 0 or null means no cap (rule-based earned leave from admin panel)
+    const yearlyLimitVal = Number(policy.yearly_limit || 0);
+    availableBalance = yearlyLimitVal > 0
+      ? Math.min(netBalance, yearlyLimitVal)
+      : netBalance;
   } else {
-    // casual — count present working days within the leave cycle
-    presentDays = await getPresentWorkingDays(employeeId, cycleStart, cycleEnd);
-    totalEarnedCredits =
-      Math.floor(presentDays / Number(policy.earned_days_required)) *
-      Number(policy.earned_leave_award);
+    // casual — no annual cap, just net balance
     availableBalance = Math.max(totalEarnedCredits - consumedEarnedDays, 0);
   }
 

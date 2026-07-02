@@ -276,21 +276,65 @@ const upsertEmployeeLeaveBalance = async ({
   leaveType,
   usedDays = 0,
   balance = 0,
+  cycleStart = null,
+  cycleEnd = null,
 }) => {
   const result = await pool.query(
     `
-      INSERT INTO employee_leave_balance (employee_id, leave_type, used_days, balance, updated_at)
-      VALUES ($1, $2, $3, $4, NOW())
+      INSERT INTO employee_leave_balance
+        (employee_id, leave_type, used_days, balance, cycle_start, cycle_end, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
       ON CONFLICT (employee_id, leave_type)
       DO UPDATE SET
-        used_days = EXCLUDED.used_days,
-        balance = EXCLUDED.balance,
-        updated_at = NOW()
+        used_days   = EXCLUDED.used_days,
+        balance     = EXCLUDED.balance,
+        cycle_start = EXCLUDED.cycle_start,
+        cycle_end   = EXCLUDED.cycle_end,
+        updated_at  = NOW()
       RETURNING *
     `,
-    [employeeId, leaveType, usedDays, balance]
+    [employeeId, leaveType, usedDays, balance, cycleStart, cycleEnd]
   );
   return result.rows[0];
+};
+
+/**
+ * Archives the expired balance for a completed leave cycle into the history table.
+ * Called automatically when syncEarnedLeaveBalanceForEmployee detects a cycle change.
+ */
+const archiveExpiredLeaveBalance = async ({
+  employeeId,
+  leaveType,
+  cycleStart,
+  cycleEnd,
+  earnedDays,
+  usedDays,
+  expiredDays,
+}) => {
+  try {
+    await pool.query(
+      `
+        INSERT INTO employee_leave_balance_history
+          (employee_id, leave_type, cycle_start, cycle_end, earned_days, used_days, expired_days)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (employee_id, leave_type, cycle_start) DO NOTHING
+      `,
+      [
+        employeeId,
+        leaveType,
+        cycleStart,
+        cycleEnd,
+        earnedDays,
+        usedDays,
+        Math.max(Number(expiredDays), 0),
+      ]
+    );
+  } catch (err) {
+    console.error(
+      `Failed to archive leave balance history for employee ${employeeId} (${leaveType}):`,
+      err.message
+    );
+  }
 };
 
 const getYearBounds = (year) => ({
@@ -410,37 +454,60 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
 
   const renewalType = policy.leave_renewal_type || "date_of_joining";
 
-  // Compute cycle bounds based on renewal type
+  // Compute current cycle bounds based on renewal type
   const { start: cycleStart, end: cycleEnd } = getLeaveCycle(
-    policy.employee_created_at,  // joining date for DOJ mode
+    policy.employee_created_at,
     date,
     renewalType
   );
 
+  // ── Cycle Change Detection ──────────────────────────────────────────────────
+  // Fetch the existing DB row to check which cycle it belongs to.
+  const existingRow = await getEmployeeLeaveBalanceByType(employeeId, type);
+
+  if (existingRow && existingRow.cycle_start) {
+    const storedCycleStart = new Date(existingRow.cycle_start).toISOString().split('T')[0];
+
+    // If stored cycle_start differs from current cycleStart → cycle has rolled over
+    if (storedCycleStart !== cycleStart) {
+      // Archive the expired balance from the previous cycle
+      await archiveExpiredLeaveBalance({
+        employeeId,
+        leaveType: type,
+        cycleStart: storedCycleStart,
+        cycleEnd: new Date(existingRow.cycle_end).toISOString().split('T')[0],
+        earnedDays: Number(existingRow.used_days || 0) + Number(existingRow.balance || 0),
+        usedDays: Number(existingRow.used_days || 0),
+        expiredDays: Number(existingRow.balance || 0),  // unused = expired
+      });
+
+      console.log(
+        `[LeaveSync] Cycle rolled over for employee ${employeeId} (${type}). ` +
+        `Previous: ${storedCycleStart}, New: ${cycleStart}. ` +
+        `Archived expired_days=${existingRow.balance}`
+      );
+    }
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
+  // getConsumedEarnedLeaveDays already filters by cycleStart–cycleEnd,
+  // so in a new cycle this will naturally return 0.
   const consumedEarnedDays = await getConsumedEarnedLeaveDays(employeeId, cycleStart, cycleEnd, type);
 
-  // Both 'earned' and 'casual' use the same working-days based accrual:
-  //   every earned_days_required working days → earned_leave_award leave days
-  // For 'earned': result is additionally capped by yearly_limit.
-  let presentDays = 0;
-  let totalEarnedCredits = 0;
-  let availableBalance = 0;
-
-  presentDays = await getPresentWorkingDays(employeeId, cycleStart, cycleEnd);
-  totalEarnedCredits =
+  const presentDays = await getPresentWorkingDays(employeeId, cycleStart, cycleEnd);
+  const totalEarnedCredits =
     Math.floor(presentDays / Number(policy.earned_days_required)) *
     Number(policy.earned_leave_award);
 
+  let availableBalance = 0;
   if (type === "earned") {
     const netBalance = Math.max(totalEarnedCredits - consumedEarnedDays, 0);
-    // yearly_limit > 0 means admin set an explicit cap (e.g. max 15 earned leaves/year)
-    // yearly_limit = 0 or null means no cap (rule-based earned leave from admin panel)
     const yearlyLimitVal = Number(policy.yearly_limit || 0);
     availableBalance = yearlyLimitVal > 0
       ? Math.min(netBalance, yearlyLimitVal)
       : netBalance;
   } else {
-    // casual — no annual cap, just net balance
+    // casual — net balance, no annual cap
     availableBalance = Math.max(totalEarnedCredits - consumedEarnedDays, 0);
   }
 
@@ -449,6 +516,8 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
     leaveType: type,
     usedDays: consumedEarnedDays,
     balance: availableBalance,
+    cycleStart,   // store current cycle so next sync can detect rollover
+    cycleEnd,
   });
 
   return {
@@ -456,8 +525,54 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
     presentDays,
     consumedEarnedDays,
     totalEarnedCredits,
+    cycleStart,
+    cycleEnd,
     balance: Number(upserted.balance || 0),
   };
+};
+
+/**
+ * Returns the leave balance history (expired cycles) for all employees
+ * in an organization. Used by the admin Leave History Report.
+ *
+ * @param {number} organizationId
+ * @param {string|null} leaveType  - Filter by leave type ('earned'|'casual'). Null = both.
+ * @returns {Promise<Array>}
+ */
+const getEmployeeLeaveBalanceHistory = async (organizationId, leaveType = null) => {
+  const params = [organizationId];
+  let leaveTypeFilter = '';
+
+  if (leaveType && ['earned', 'casual'].includes(leaveType)) {
+    params.push(leaveType);
+    leaveTypeFilter = `AND h.leave_type = $${params.length}`;
+  } else {
+    leaveTypeFilter = `AND h.leave_type IN ('earned', 'casual')`;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT
+        e.id           AS employee_id,
+        e.name         AS employee_name,
+        e.email,
+        h.leave_type,
+        h.cycle_start,
+        h.cycle_end,
+        h.earned_days,
+        h.used_days,
+        h.expired_days,
+        h.created_at
+      FROM employee_leave_balance_history h
+      JOIN employees e ON e.id = h.employee_id
+      WHERE e.organization_id = $1
+        ${leaveTypeFilter}
+      ORDER BY e.name ASC, h.leave_type ASC, h.cycle_start DESC
+    `,
+    params
+  );
+
+  return result.rows;
 };
 
 const getOrganizationLeaveBalanceReport = async (organizationId) => {
@@ -531,6 +646,8 @@ module.exports = {
   getEmployeeLeaveBalances,
   getEmployeeLeaveBalanceByType,
   upsertEmployeeLeaveBalance,
+  archiveExpiredLeaveBalance,
   syncEarnedLeaveBalanceForEmployee,
   getOrganizationLeaveBalanceReport,
+  getEmployeeLeaveBalanceHistory,
 };

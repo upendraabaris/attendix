@@ -4,6 +4,7 @@ const { validateLeaveRequestAgainstPolicy } = require("../services/leavePolicySe
 const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
 const { getEmployeeLeaveBalances } = require("../services/leaveBalanceService");
 const { getOrganizationLeaveBalanceReport } = require("../services/leaveBalanceService");
+const { getEmployeeLeaveBalanceHistory } = require("../services/leaveBalanceService");
 const { uploadToS3 } = require("../services/s3Uploader");
 
 const getRequestedDays = (startDate, endDate) =>
@@ -392,6 +393,51 @@ const getOrganizationLeaveBalanceReportCtrl = async (req, res) => {
 };
 
 /**
+ * GET /leave/balance-history (Admin only)
+ * Returns cycle-end snapshots of expired earned/casual leave for all employees
+ * in the organization. Used for admin reporting of previous-year unused leave.
+ *
+ * Optional query param: ?leaveType=earned|casual  (default: both)
+ */
+const getLeaveBalanceHistoryCtrl = async (req, res) => {
+  const organizationId = req.user.organization_id;
+  const role = String(req.user.role || "").toLowerCase();
+
+  if (!role.includes("admin")) {
+    return res.status(403).json({
+      statusCode: 403,
+      message: "Forbidden: admin access required",
+    });
+  }
+
+  if (!organizationId) {
+    return res.status(400).json({
+      statusCode: 400,
+      message: "Organization ID missing in token",
+    });
+  }
+
+  const leaveType = req.query.leaveType || null;
+
+  try {
+    const history = await getEmployeeLeaveBalanceHistory(organizationId, leaveType);
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Leave balance history retrieved successfully",
+      data: history,
+    });
+  } catch (error) {
+    console.error("Error retrieving leave balance history:", error);
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to retrieve leave balance history",
+      error: error.message,
+    });
+  }
+};
+
+/**
  * Get leave requests for a specific employee (admin only)
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
@@ -639,5 +685,6 @@ module.exports = {
   getAllLeaveRequests,
   getPendingLeaveRequests,
   updateLeaveRequestStatus,
+  getLeaveBalanceHistoryCtrl,
   // __mobileNotification
 };

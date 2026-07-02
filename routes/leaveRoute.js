@@ -7,7 +7,8 @@ const {
   getEmployeeLeaveRequests,
   getAllLeaveRequests,
   getPendingLeaveRequests,
-  updateLeaveRequestStatus
+  updateLeaveRequestStatus,
+  getLeaveBalanceHistoryCtrl,
 } = require("../controllers/leaveCtrl");
 
 const { authenticate, authorizeRoles } = require("../middleware/authMiddleware");
@@ -54,5 +55,13 @@ router.put('/update/:leaveId', authenticate, updateLeaveRequestStatus);
 
 
 router.get('/admin/leave-requests/pending', authenticate, getPendingLeaveRequests);
+
+/**
+ * @route GET /api/leave/balance-history
+ * @desc Get expired leave balance history per employee (admin report)
+ * @access Private (Admin)
+ * @query leaveType - optional, 'earned' | 'casual' (default: both)
+ */
+router.get('/balance-history', authenticate, authorizeRoles('admin'), getLeaveBalanceHistoryCtrl);
 
 module.exports = router;

@@ -38,4 +38,27 @@ const getMasterTasks = async (req, res) => {
   }
 };
 
-module.exports = { createMasterTask, getMasterTasks };
+const updateMasterTask = async (req, res) => {
+  const { id } = req.params;
+  const { title, description, start_date, end_date, assignees } = req.body;
+  let assigneesList = Array.isArray(assignees) ? assignees.map(Number) : [];
+
+  try {
+    const result = await pool.query(
+      `UPDATE master_tasks 
+       SET title = $1, description = $2, start_date = $3, end_date = $4, assignees = $5
+       WHERE id = $6 RETURNING *`,
+      [title, description || null, start_date || null, end_date || null, assigneesList, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ statusCode: 404, message: "Master task not found" });
+    }
+
+    res.status(200).json({ statusCode: 200, data: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ statusCode: 500, message: "Failed to update master task", error: error.message });
+  }
+};
+
+module.exports = { createMasterTask, getMasterTasks, updateMasterTask };

@@ -518,13 +518,18 @@ const getCompOffBalance = async (employeeId, organizationId) => {
     pool.query(
       `
         SELECT
-          COUNT(*) FILTER (
-            WHERE comp_leave_used = false
+          -- Available = sum of remaining fractional days (not expired)
+          COALESCE(SUM(remaining_days) FILTER (
+            WHERE remaining_days > 0
               AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
-          )::int AS available_balance,
-          COUNT(*) FILTER (WHERE comp_leave_used = true)::int AS used_count,
+          ), 0)::numeric AS available_balance,
+          -- Used = how many days have been consumed (fully or partially)
+          COALESCE(SUM(1.0 - remaining_days) FILTER (
+            WHERE remaining_days < 1.0
+          ), 0)::numeric AS used_count,
+          -- Expired = entries that were unused and expired
           COUNT(*) FILTER (
-            WHERE comp_leave_used = false
+            WHERE remaining_days > 0
               AND expiry_date IS NOT NULL
               AND expiry_date < CURRENT_DATE
           )::int AS expired_count,
@@ -582,11 +587,14 @@ const getCompOffHistory = async (employeeId, organizationId) => {
         ce.work_date,
         ce.reason,
         ce.comp_leave_used,
+        ce.remaining_days,
         ce.expiry_date,
         ce.created_at,
         CASE
-          WHEN ce.comp_leave_used THEN 'used'
-          WHEN ce.expiry_date IS NOT NULL AND ce.expiry_date < CURRENT_DATE THEN 'expired'
+          WHEN ce.comp_leave_used AND ce.remaining_days <= 0 THEN 'used'
+          WHEN ce.remaining_days > 0 AND ce.remaining_days < 1.0 THEN 'partial'
+          WHEN ce.expiry_date IS NOT NULL AND ce.expiry_date < CURRENT_DATE
+               AND ce.remaining_days > 0 THEN 'expired'
           ELSE 'available'
         END AS status
       FROM compensation_earned ce
@@ -606,7 +614,8 @@ const useCompOff = async ({ compOffId, employeeId, organizationId }) => {
   const result = await pool.query(
     `
       UPDATE compensation_earned ce
-      SET comp_leave_used = true
+      SET comp_leave_used = true,
+          remaining_days  = 0.0
       FROM employees e
       WHERE ce.id = $1
         AND ce.employee_id = e.id

@@ -350,10 +350,10 @@ const validateLeaveRequestAgainstPolicy = async ({
   if (COMP_OFF_LEAVE_TYPES.includes(balanceLeaveType)) {
     const balanceResult = await pool.query(
       `
-        SELECT COUNT(*) FILTER (
-          WHERE comp_leave_used = false
+        SELECT COALESCE(SUM(remaining_days) FILTER (
+          WHERE remaining_days > 0
             AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
-        )::int AS available_balance
+        ), 0)::numeric AS available_balance
         FROM compensation_earned
         WHERE employee_id = $1
       `,
@@ -368,7 +368,7 @@ const validateLeaveRequestAgainstPolicy = async ({
         `Insufficient ${leaveType} leave balance. Available: ${Math.max(
           remainingBalance,
           0
-        )} day(s), Requested: ${requestedDays} day(s)`
+        ).toFixed(1)} day(s), Requested: ${requestedDays} day(s)`
       );
     }
 

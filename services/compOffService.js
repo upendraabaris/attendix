@@ -25,7 +25,16 @@ const getCompOffExpiryLimit = async (organizationId) => {
     [organizationId]
   );
 
-  return Number(result.rows[0]?.expire_limit || DEFAULT_EXPIRY_DAYS);
+  if (result.rows.length === 0) {
+    return DEFAULT_EXPIRY_DAYS;
+  }
+
+  const limit = result.rows[0].expire_limit;
+  if (limit === null || limit === undefined) {
+    return null; // NO EXPIRY
+  }
+
+  return Number(limit);
 };
 
 const isValidDateInput = (value) => value && !Number.isNaN(new Date(value).getTime());
@@ -370,9 +379,12 @@ const isWeeklyOffAsPerPolicy = (workDate, policyName, policyStartDate = null) =>
   return false;
 };
 
-const buildExpiryDate = (workDate, expiryDays = DEFAULT_EXPIRY_DAYS) => {
+const buildExpiryDate = (workDate, expiryDays) => {
+  if (expiryDays === null || expiryDays === undefined) {
+    return null; // NEVER EXPIRES
+  }
   const dateValue = new Date(`${workDate}T00:00:00`);
-  dateValue.setDate(dateValue.getDate() + Number(expiryDays || DEFAULT_EXPIRY_DAYS));
+  dateValue.setDate(dateValue.getDate() + Number(expiryDays));
   return dateValue.toISOString().split("T")[0];
 };
 
@@ -438,9 +450,9 @@ const earnCompOff = async ({
   }
 
   const resolvedExpiryDays =
-    expiryDays === undefined || expiryDays === null
+    expiryDays === undefined
       ? await getCompOffExpiryLimit(organizationId)
-      : Number(expiryDays || DEFAULT_EXPIRY_DAYS);
+      : (expiryDays === null ? null : Number(expiryDays));
 
   const evaluation = await evaluateCompOffEligibility({
     employeeId,

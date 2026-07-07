@@ -81,6 +81,7 @@ const trackingSettingsRoute = require("./routes/trackingSettingsRoute");
 const breakRoutes = require("./routes/breakRoutes");
 const supportRoute = require("./routes/supportRoute");
 const chatRoute = require("./routes/chatRoute");
+const aiRoute = require("./routes/aiRoute");
 
 app.use("/api/attendance", attendanceRoute);
 app.use("/api/leave", leaveRoute);
@@ -100,6 +101,7 @@ app.use("/api/tracking-settings", trackingSettingsRoute);
 app.use("/api/break", breakRoutes);
 app.use("/api/support", supportRoute);
 app.use("/api/chat", chatRoute);
+app.use("/api/ai", aiRoute);
 
 app.get("/", (_req, res) => res.send("Hello world"));
 

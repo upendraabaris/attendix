@@ -32,6 +32,7 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
     document_days_required: payload.document_days_required,
     max_consecutive_days: payload.max_consecutive_days,
     expire_limit: payload.expire_limit,
+    carry_forward_enabled: payload.carry_forward_enabled,
   };
 
   if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "leave_type")) {
@@ -51,6 +52,11 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
   if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "is_enabled")) {
     normalized.is_enabled =
       typeof normalized.is_enabled === "boolean" ? normalized.is_enabled : true;
+  }
+
+  if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "carry_forward_enabled")) {
+    normalized.carry_forward_enabled =
+      typeof normalized.carry_forward_enabled === "boolean" ? normalized.carry_forward_enabled : false;
   }
 
   if (!isUpdate || Object.prototype.hasOwnProperty.call(payload, "max_consecutive_days")) {
@@ -112,6 +118,11 @@ const validatePolicyInput = (payload = {}, isUpdate = false) => {
     normalized.expire_limit = null;
   }
 
+  // Carry forward is never applicable to compensation leave (handled separately)
+  if (leaveType === "compensation") {
+    normalized.carry_forward_enabled = false;
+  }
+
   return normalized;
 };
 
@@ -121,9 +132,9 @@ const upsertLeavePolicy = async (organizationId, payload) => {
   const result = await pool.query(
     `
       INSERT INTO leave_policies (
-        organization_id, leave_type, yearly_limit, is_enabled, earned_days_required, earned_leave_award, document_days_required, max_consecutive_days, expire_limit
+        organization_id, leave_type, yearly_limit, is_enabled, earned_days_required, earned_leave_award, document_days_required, max_consecutive_days, expire_limit, carry_forward_enabled
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       ON CONFLICT (organization_id, leave_type)
       DO UPDATE SET
         yearly_limit = EXCLUDED.yearly_limit,
@@ -132,7 +143,8 @@ const upsertLeavePolicy = async (organizationId, payload) => {
         earned_leave_award = EXCLUDED.earned_leave_award,
         document_days_required = EXCLUDED.document_days_required,
         max_consecutive_days = EXCLUDED.max_consecutive_days,
-        expire_limit = EXCLUDED.expire_limit
+        expire_limit = EXCLUDED.expire_limit,
+        carry_forward_enabled = EXCLUDED.carry_forward_enabled
       RETURNING *
     `,
     [
@@ -145,6 +157,7 @@ const upsertLeavePolicy = async (organizationId, payload) => {
       data.document_days_required ?? null,
       data.max_consecutive_days ?? null,
       data.expire_limit ?? null,
+      data.carry_forward_enabled ?? false,
     ]
   );
 
@@ -208,6 +221,7 @@ const getLeavePoliciesByOrganization = async (organizationId) => {
         document_days_required,
         max_consecutive_days,
         expire_limit,
+        carry_forward_enabled,
         created_at
       FROM leave_policies
       WHERE organization_id = $1
@@ -253,7 +267,8 @@ const updateLeavePolicy = async (organizationId, policyId, payload) => {
         earned_leave_award = $4,
         document_days_required = $7,
         max_consecutive_days = $8,
-        expire_limit = $9
+        expire_limit = $9,
+        carry_forward_enabled = $10
       WHERE id = $5
         AND organization_id = $6
       RETURNING *
@@ -268,6 +283,7 @@ const updateLeavePolicy = async (organizationId, policyId, payload) => {
       data.document_days_required ?? null,
       data.max_consecutive_days ?? null,
       data.expire_limit ?? null,
+      data.carry_forward_enabled ?? false,
     ]
   );
 

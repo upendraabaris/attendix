@@ -66,7 +66,7 @@ exports.getAllWorkspaces = async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT id, name, created_at
+      `SELECT id, name, created_at, created_by_name
        FROM workspaces
        WHERE organization_id = $1
        ORDER BY id DESC`,
@@ -84,6 +84,9 @@ exports.createWorkspace = async (req, res) => {
   const rawName = req.body?.name;
   const name = typeof rawName === "string" ? rawName.trim() : "";
   const organization_id = req.user?.organization_id;
+  const employee_id = req.user?.employee_id;
+
+  let created_by_name = req.body?.created_by_name || req.user?.employee_name;
 
   if (!organization_id) {
     return res.status(403).json({ message: "Organization context missing" });
@@ -93,11 +96,17 @@ exports.createWorkspace = async (req, res) => {
   }
 
   try {
+    if (!created_by_name && employee_id) {
+      const empRes = await pool.query('SELECT name FROM employees WHERE id = $1', [employee_id]);
+      if (empRes.rows[0]) created_by_name = empRes.rows[0].name;
+    }
+    created_by_name = created_by_name || "Admin";
+
     const result = await pool.query(
-      `INSERT INTO workspaces (name, organization_id)
-       VALUES ($1, $2)
-       RETURNING id, name, created_at, organization_id`,
-      [name, organization_id]
+      `INSERT INTO workspaces (name, organization_id, created_by_name)
+       VALUES ($1, $2, $3)
+       RETURNING id, name, created_at, organization_id, created_by_name`,
+      [name, organization_id, created_by_name]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -118,15 +127,18 @@ exports.getAllWorkspacesByEmployeeId = async (req, res) => {
       return res.status(403).json({ message: "User context missing" });
     }
 
+    const empRes = await pool.query('SELECT name FROM employees WHERE id = $1', [employee_id]);
+    const employee_name = empRes.rows[0]?.name || '';
+
     const result = await pool.query(
-      `SELECT w.id, w.name, w.created_at
+      `SELECT w.id, w.name, w.created_at, w.created_by_name
        FROM workspaces w
        LEFT JOIN tasks t ON t.workspace_id = w.id AND t.employee_id = $1
        LEFT JOIN master_tasks mt ON mt.workspace_id = w.id AND $1 = ANY(mt.assignees)
-       WHERE w.organization_id = $2 AND (t.employee_id IS NOT NULL OR mt.id IS NOT NULL)
-       GROUP BY w.id, w.name, w.created_at
+       WHERE w.organization_id = $2 AND (t.employee_id IS NOT NULL OR mt.id IS NOT NULL OR w.created_by_name = $3)
+       GROUP BY w.id, w.name, w.created_at, w.created_by_name
        ORDER BY w.id DESC`,
-      [employee_id, organization_id]
+      [employee_id, organization_id, employee_name]
     );
 
     res.json(result.rows);

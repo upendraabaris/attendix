@@ -189,8 +189,8 @@ const insertGeneratedTasks = async ({
       const result = await client.query(
         `INSERT INTO tasks (
            employee_id, title, due_date, description, attachment, workspace_id, workspace_name,
-           recurrence_type, recurrence_days, recurrence_end_date
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           recurrence_type, recurrence_days, recurrence_end_date, priority
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          RETURNING *`,
         [
           employeeId,
@@ -203,6 +203,7 @@ const insertGeneratedTasks = async ({
           recurrenceType,
           recurrenceDays,
           recurrenceEndDate,
+          arguments[0].priority || 'medium',
         ]
       );
 
@@ -221,7 +222,7 @@ const insertGeneratedTasks = async ({
 
 const createTask = async (req, res) => {
   const employeeId = req.user.employee_id;
-  const { title, due_date, description, attachment, recurrence_type, recurrence_days, recurrence_end_date, monthly_day } = req.body;
+  const { title, due_date, description, attachment, recurrence_type, recurrence_days, recurrence_end_date, monthly_day, priority } = req.body;
 
   const recurrence = sanitizeRecurrence({
     due_date,
@@ -255,6 +256,7 @@ const createTask = async (req, res) => {
       recurrenceDays: recurrence.recurrenceDays,
       recurrenceEndDate: recurrence.endDate ? toDateString(recurrence.endDate) : null,
       dueDates,
+      priority: priority || 'medium',
     });
 
     return res.status(201).json({
@@ -277,7 +279,14 @@ const getMyTasks = async (req, res) => {
   const employeeId = req.user.employee_id;
 
   try {
-    const result = await pool.query("SELECT * FROM get_tasks_by_employee($1)", [employeeId]);
+    const result = await pool.query(
+      `SELECT t.*, w.name as workspace_name
+       FROM tasks t
+       LEFT JOIN workspaces w ON t.workspace_id = w.id
+       WHERE t.employee_id = $1
+       ORDER BY t.created_at DESC`,
+      [employeeId]
+    );
 
     const formattedTasks = result.rows.map((task) => ({
       ...task,
@@ -513,6 +522,7 @@ const assignTask = async (req, res) => {
     recurrence_days,
     recurrence_end_date,
     monthly_day,
+    priority,
   } = req.body;
 
   const recurrence = sanitizeRecurrence({
@@ -547,6 +557,7 @@ const assignTask = async (req, res) => {
       recurrenceDays: recurrence.recurrenceDays,
       recurrenceEndDate: recurrence.endDate ? toDateString(recurrence.endDate) : null,
       dueDates,
+      priority: priority || 'medium',
     });
 
     return res.status(201).json({
@@ -624,7 +635,7 @@ const deleteTask = async (req, res) => {
 };
 
 const quickAddTask = async (req, res) => {
-  const { title, hours_worked, date, workspace_id, master_task_id, employee_id, workspace_name, task_type, kpi, target_val, actual_result, remark, status } = req.body;
+  const { title, hours_worked, date, workspace_id, master_task_id, employee_id, workspace_name, task_type, kpi, target_val, actual_result, remark, status, priority } = req.body;
   const adminOrEmpId = req.user.employee_id;
   const finalStatus = status || 'open';
   const isCompleted = finalStatus === 'closed';
@@ -637,8 +648,8 @@ const quickAddTask = async (req, res) => {
     const result = await pool.query(
       `INSERT INTO tasks (
          title, hours_worked, due_date, workspace_id, master_task_id, employee_id, workspace_name, status, completed,
-         task_type, kpi, target_val, actual_result, remark
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         task_type, kpi, target_val, actual_result, remark, priority
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         title,
@@ -654,7 +665,8 @@ const quickAddTask = async (req, res) => {
         kpi || null,
         target_val || null,
         actual_result || null,
-        remark || null
+        remark || null,
+        priority || 'medium'
       ]
     );
 
@@ -674,11 +686,11 @@ const quickAddTask = async (req, res) => {
 };
 
 const updateTaskLogInline = async (req, res) => {
-  const { taskId, hours_worked, kpi, target_val, actual_result, remark, status } = req.body;
+  const { taskId, title, hours_worked, kpi, target_val, actual_result, remark, status, priority } = req.body;
   const userEmpId = req.user?.employee_id;
   const role = req.user?.role?.toLowerCase() || '';
   const isAdmin = role.includes('admin');
-  
+
   if (hours_worked !== undefined && Number(hours_worked) < 0) {
     return res.status(400).json({ statusCode: 400, message: "Hours worked cannot be negative" });
   }
@@ -697,17 +709,19 @@ const updateTaskLogInline = async (req, res) => {
 
     const result = await pool.query(
       `UPDATE tasks 
-       SET hours_worked = COALESCE($1, hours_worked),
-           kpi = COALESCE($2, kpi),
-           target_val = COALESCE($3, target_val),
-           actual_result = COALESCE($4, actual_result),
-           remark = COALESCE($5, remark),
-           status = COALESCE($6, status),
-           completed = CASE WHEN COALESCE($6, status) = 'closed' THEN true ELSE completed END,
+       SET title = COALESCE($1, title),
+           hours_worked = COALESCE($2, hours_worked),
+           kpi = COALESCE($3, kpi),
+           target_val = COALESCE($4, target_val),
+           actual_result = COALESCE($5, actual_result),
+           remark = COALESCE($6, remark),
+           status = COALESCE($7, status),
+           priority = COALESCE($9, priority),
+           completed = CASE WHEN COALESCE($7, status) = 'closed' THEN true ELSE completed END,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $7
+       WHERE id = $8
        RETURNING *`,
-      [hours_worked, kpi, target_val, actual_result, remark, status, taskId]
+      [title, hours_worked, kpi, target_val, actual_result, remark, status, taskId, priority]
     );
 
     if (result.rowCount === 0) {
@@ -764,9 +778,13 @@ const getFilteredWorkspaceTasks = async (req, res) => {
     }
 
     if (req.query.status && req.query.status !== 'all') {
-      query += ` AND t.status = $${paramIndex}`;
-      values.push(req.query.status);
-      paramIndex++;
+      if (req.query.status === 'active') {
+        query += ` AND (t.status != 'closed' OR t.status IS NULL)`;
+      } else {
+        query += ` AND t.status = $${paramIndex}`;
+        values.push(req.query.status);
+        paramIndex++;
+      }
     }
 
     if (req.query.master_task_id && req.query.master_task_id !== 'all') {

@@ -801,6 +801,114 @@ const getFilteredWorkspaceTasks = async (req, res) => {
   }
 };
 
+const getTrackerTasks = async (req, res) => {
+  const employeeId = req.user.employee_id;
+
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM tasks
+       WHERE employee_id = $1
+       AND task_type = 'daily'
+       AND LOWER(status) IN ('open', 'in progress')
+       AND DATE(created_at) = CURRENT_DATE
+       ORDER BY created_at DESC`,
+      [employeeId]
+    );
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Tracker tasks fetched successfully",
+      data: result.rows,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to fetch tracker tasks",
+      error: error.message,
+    });
+  }
+};
+
+const startTask = async (req, res) => {
+  const { taskId } = req.body;
+  const employeeId = req.user.employee_id;
+
+  try {
+    const result = await pool.query(
+      `UPDATE tasks
+       SET status = 'In Progress',
+           started_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+         AND employee_id = $2
+         AND LOWER(status) = 'open'
+       RETURNING *`,
+      [taskId, employeeId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Task not found, unauthorized, or already started",
+      });
+    }
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Task started successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Start Task Error:", error);
+
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to start task",
+      error: error.message,
+    });
+  }
+};
+const endTask = async (req, res) => {
+  const { taskId } = req.body;
+  const employeeId = req.user.employee_id;
+
+  try {
+    const result = await pool.query(
+      `UPDATE tasks
+       SET status = 'Completed',
+           completed = true,
+           ended_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+         AND employee_id = $2
+         AND LOWER(status) = 'in progress'
+       RETURNING *`,
+      [taskId, employeeId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Task not found, unauthorized, or not in progress",
+      });
+    }
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Task ended successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("End Task Error:", error);
+
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to end task",
+      error: error.message,
+    });
+  }
+};
+
+
 module.exports = {
   createTask,
   getMyTasks,
@@ -811,4 +919,7 @@ module.exports = {
   quickAddTask,
   updateTaskLogInline,
   getFilteredWorkspaceTasks,
+  getTrackerTasks,
+  startTask,
+  endTask,
 };

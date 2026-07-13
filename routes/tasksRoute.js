@@ -10,6 +10,9 @@ const {
   quickAddTask,
   updateTaskLogInline,
   getFilteredWorkspaceTasks,
+  getTrackerTasks,
+  startTask,
+  endTask,
 } = require("../controllers/taskCtrl");
 const { authenticate } = require("../middleware/authMiddleware");
 
@@ -21,7 +24,11 @@ router.get("/all", authenticate, getAllEmployeesTasks);
 router.post("/assignTask", authenticate, assignTask);
 router.post("/quick-add", authenticate, quickAddTask);
 router.post("/update-inline", authenticate, updateTaskLogInline);
+router.get("/tracker", authenticate, getTrackerTasks);
+router.post("/tracker/start", authenticate, startTask);
+router.post("/tracker/end", authenticate, endTask);
 router.delete("/:taskId", authenticate, deleteTask);
+
 // ✅ New route to get employee-wise workspaces
 // router.get("/employees/workspaces", authenticate, getEmployeesWorkspaces);
 

@@ -110,7 +110,7 @@ const result = await pool.query(
         THEN COALESCE(elb.balance, 0)
 
       ELSE GREATEST(
-        lp.yearly_limit - COALESCE(used_data.used_days, 0),
+        lp.yearly_limit - COALESCE(used_data.used_days, 0) + COALESCE(elb.carry_forward_balance, 0),
         0
       )
     END AS balance,
@@ -278,22 +278,27 @@ const upsertEmployeeLeaveBalance = async ({
   balance = 0,
   cycleStart = null,
   cycleEnd = null,
+  carryForwardBalance = null, // null = do not update carry_forward_balance
 }) => {
   const result = await pool.query(
     `
       INSERT INTO employee_leave_balance
-        (employee_id, leave_type, used_days, balance, cycle_start, cycle_end, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        (employee_id, leave_type, used_days, balance, cycle_start, cycle_end, carry_forward_balance, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 0), NOW())
       ON CONFLICT (employee_id, leave_type)
       DO UPDATE SET
-        used_days   = EXCLUDED.used_days,
-        balance     = EXCLUDED.balance,
-        cycle_start = EXCLUDED.cycle_start,
-        cycle_end   = EXCLUDED.cycle_end,
+        used_days             = EXCLUDED.used_days,
+        balance               = EXCLUDED.balance,
+        cycle_start           = EXCLUDED.cycle_start,
+        cycle_end             = EXCLUDED.cycle_end,
+        carry_forward_balance = CASE
+          WHEN $7 IS NOT NULL THEN EXCLUDED.carry_forward_balance
+          ELSE employee_leave_balance.carry_forward_balance
+        END,
         updated_at  = NOW()
       RETURNING *
     `,
-    [employeeId, leaveType, usedDays, balance, cycleStart, cycleEnd]
+    [employeeId, leaveType, usedDays, balance, cycleStart, cycleEnd, carryForwardBalance]
   );
   return result.rows[0];
 };
@@ -400,6 +405,7 @@ const getEarnedPolicyForEmployee = async (employeeId, type) => {
         lp.yearly_limit,
         lp.earned_days_required,
         lp.earned_leave_award,
+        lp.carry_forward_enabled,
         e.created_at AS employee_created_at,
         COALESCE(o.leave_renewal_type, 'date_of_joining') AS leave_renewal_type
       FROM employees e
@@ -439,6 +445,8 @@ const getConsumedEarnedLeaveDays = async (employeeId, cycleStart, cycleEnd, type
 };
 
 const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', date = new Date()) => {
+  // carryForwardDays will be set during cycle rollover detection if CF is enabled
+  let carryForwardDays = 0;
   const policy = await getEarnedPolicyForEmployee(employeeId, type);
 
   if (
@@ -482,21 +490,28 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
       // If storedCycleEnd >= today the org just switched renewal modes (DOJ ↔ Calendar Year)
       // and the "old" cycle is still active under the previous mode — do NOT archive it.
       if (storedCycleEnd && storedCycleEnd < todayStr) {
+        const unusedBalance = Number(existingRow.balance || 0);
+        const carryForwardEnabled = Boolean(policy.carry_forward_enabled);
+
         await archiveExpiredLeaveBalance({
           employeeId,
           leaveType: type,
           cycleStart: storedCycleStart,
           cycleEnd:   storedCycleEnd,
-          earnedDays: Number(existingRow.used_days || 0) + Number(existingRow.balance || 0),
+          earnedDays: Number(existingRow.used_days || 0) + unusedBalance,
           usedDays:   Number(existingRow.used_days || 0),
-          expiredDays: Number(existingRow.balance || 0),
+          // If carry-forward is ON, nothing expires — days move to next cycle
+          expiredDays: carryForwardEnabled ? 0 : unusedBalance,
           renewalType,
         });
+
+        // Store carry-forward days to be added to the new cycle's balance
+        carryForwardDays = carryForwardEnabled ? unusedBalance : 0;
 
         console.log(
           `[LeaveSync] Cycle rolled over for employee ${employeeId} (${type}). ` +
           `Previous: ${storedCycleStart}→${storedCycleEnd}, New: ${cycleStart}. ` +
-          `Archived expired_days=${existingRow.balance}`
+          `CarryForward=${carryForwardEnabled}, carried=${carryForwardDays}, expired=${carryForwardEnabled ? 0 : unusedBalance}`
         );
       } else {
         // Renewal mode changed but cycle hasn't ended — just reset tracking, no archive.
@@ -522,7 +537,12 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
 
       // Guard 1: previous cycle must be a genuinely different (earlier) cycle.
       // Guard 2: previous cycle must have actually ended (cycle_end < today).
-      if (prevCycleStart < cycleStart && prevCycleEnd < todayStr) {
+      // Guard 3: the employee must have been active during the previous cycle
+      //          (joining date on or before the last day of that cycle).
+      //          For DOJ mode: joiningDate=2025-08-01, prevCycleEnd=2025-07-31 → blocked (phantom).
+      //          For Calendar Year: joiningDate=2025-08-01, prevCycleEnd=2025-12-31 → allowed.
+      const joiningDateStr = new Date(policy.employee_created_at).toISOString().split('T')[0];
+      if (prevCycleStart < cycleStart && prevCycleEnd < todayStr && joiningDateStr <= prevCycleEnd) {
         const prevConsumed = await getConsumedEarnedLeaveDays(
           employeeId, prevCycleStart, prevCycleEnd, type
         );
@@ -543,6 +563,8 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
         }
 
         if (prevEarnedCredits > 0 || prevConsumed > 0) {
+          const carryForwardEnabled = Boolean(policy.carry_forward_enabled);
+
           await archiveExpiredLeaveBalance({
             employeeId,
             leaveType:   type,
@@ -550,14 +572,18 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
             cycleEnd:    prevCycleEnd,
             earnedDays:  prevEarnedCredits,
             usedDays:    prevConsumed,
-            expiredDays: prevAvailableBalance,    // all unused balance = expired at cycle end
+            // If carry-forward is ON, nothing expires — days move to next cycle
+            expiredDays: carryForwardEnabled ? 0 : prevAvailableBalance,
             renewalType,
           });
+
+          // Store carry-forward days to be added to the new cycle's balance
+          carryForwardDays = carryForwardEnabled ? prevAvailableBalance : 0;
 
           console.log(
             `[LeaveSync] Backfilled previous cycle for employee ${employeeId} (${type}). ` +
             `Cycle: ${prevCycleStart}→${prevCycleEnd}. ` +
-            `Earned=${prevEarnedCredits}, Used=${prevConsumed}, Expired=${prevAvailableBalance}`
+            `CarryForward=${carryForwardEnabled}, carried=${carryForwardDays}, expired=${carryForwardEnabled ? 0 : prevAvailableBalance}`
           );
         }
       } else if (prevCycleStart >= cycleStart) {
@@ -601,13 +627,18 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
     availableBalance = Math.max(totalEarnedCredits - consumedEarnedDays, 0);
   }
 
+  // Add carry-forward days from the previous cycle (0 if CF is disabled or no rollover)
+  const finalBalance = availableBalance + carryForwardDays;
+
   const upserted = await upsertEmployeeLeaveBalance({
     employeeId,
     leaveType: type,
     usedDays: consumedEarnedDays,
-    balance: availableBalance,
+    balance: finalBalance,
     cycleStart,   // store current cycle so next sync can detect rollover
     cycleEnd,
+    // For rule-based types carry-forward is folded into balance directly; carry_forward_balance stays at DB default
+    carryForwardBalance: null,
   });
 
   return {
@@ -615,10 +646,325 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
     presentDays,
     consumedEarnedDays,
     totalEarnedCredits,
+    carryForwardDays,
     cycleStart,
     cycleEnd,
     balance: Number(upserted.balance || 0),
   };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Carry-forward sync for YEARLY-LIMIT leave types (Sick, Personal, Paternity…)
+// These leaves don't accrue incrementally — balance = yearly_limit − used_days.
+// On cycle rollover, unused days are written to carry_forward_balance so the
+// getEmployeeLeaveBalances query can add them to the new cycle's available balance.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetches the policy for a non-rule-based leave type for an employee.
+ * Returns yearly_limit, carry_forward_enabled, renewal settings.
+ */
+const getNonRuleBasedPolicyForEmployee = async (employeeId, leaveType) => {
+  const result = await pool.query(
+    `
+      SELECT
+        lp.organization_id,
+        lp.leave_type,
+        lp.is_enabled,
+        lp.yearly_limit,
+        lp.carry_forward_enabled,
+        e.created_at AS employee_created_at,
+        COALESCE(o.leave_renewal_type, 'date_of_joining') AS leave_renewal_type
+      FROM employees e
+      JOIN leave_policies lp
+        ON lp.organization_id = e.organization_id
+      LEFT JOIN organizations o ON o.id = e.organization_id
+      WHERE e.id = $1
+        AND lp.leave_type = $2
+      LIMIT 1
+    `,
+    [employeeId, leaveType]
+  );
+  return result.rows[0] || null;
+};
+
+/**
+ * Gets the total approved leave days used by an employee for a given leave type
+ * within a specific date range (cycle bounds).
+ */
+const getUsedDaysForCycle = async (employeeId, leaveType, cycleStart, cycleEnd) => {
+  const result = await pool.query(
+    `
+      SELECT COALESCE(SUM(
+        CASE WHEN lr.is_half_day THEN 0.5
+             ELSE (LEAST(lr.end_date, $4::date) - GREATEST(lr.start_date, $3::date) + 1)::numeric
+        END
+      ), 0)::numeric AS used_days
+      FROM leave_requests lr
+      WHERE lr.employee_id = $1
+        AND lr.type = $2
+        AND lr.status = 'approved'
+        AND lr.start_date <= $4::date
+        AND lr.end_date >= $3::date
+    `,
+    [employeeId, leaveType, cycleStart, cycleEnd]
+  );
+  return Number(result.rows[0]?.used_days || 0);
+};
+
+/**
+ * Syncs cycle tracking and carry-forward balance for yearly-limit leave types
+ * (sick, personal, paternity, vacation, etc. — NOT earned/casual/compensation).
+ *
+ * On cycle rollover with carry_forward_enabled = true:
+ *   - Archives the old cycle with expired_days = 0
+ *   - Writes unused days into carry_forward_balance for the new cycle
+ *
+ * On cycle rollover with carry_forward_enabled = false:
+ *   - Archives the old cycle with expired_days = unused days
+ *   - Sets carry_forward_balance = 0
+ *
+ * @param {number} employeeId
+ * @param {string} leaveType  - e.g. 'sick', 'personal', 'paternity'
+ * @returns {Promise<{synced: boolean, carryForwardBalance: number}>}
+ */
+const syncNonRuleBasedLeaveForEmployee = async (employeeId, leaveType) => {
+  const RULE_BASED = ['earned', 'casual'];
+  const COMP_BASED = ['compensation', 'comp_off'];
+
+  if (RULE_BASED.includes(leaveType) || COMP_BASED.includes(leaveType)) {
+    return { synced: false, reason: 'wrong_type' };
+  }
+
+  const policy = await getNonRuleBasedPolicyForEmployee(employeeId, leaveType);
+  if (!policy || !policy.is_enabled) {
+    return { synced: false, reason: 'policy_missing_or_disabled' };
+  }
+
+  const renewalType = policy.leave_renewal_type || 'date_of_joining';
+  const { start: cycleStart, end: cycleEnd } = getLeaveCycle(
+    policy.employee_created_at,
+    new Date(),
+    renewalType
+  );
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const existingRow = await getEmployeeLeaveBalanceByType(employeeId, leaveType);
+  const carryForwardEnabled = Boolean(policy.carry_forward_enabled);
+
+  if (existingRow && existingRow.cycle_start) {
+    const storedCycleStart = new Date(existingRow.cycle_start).toISOString().split('T')[0];
+    const storedCycleEnd   = existingRow.cycle_end
+      ? new Date(existingRow.cycle_end).toISOString().split('T')[0]
+      : null;
+
+    if (storedCycleStart !== cycleStart) {
+      // Cycle has rolled over — process carry-forward if the old cycle actually ended
+      if (storedCycleEnd && storedCycleEnd < todayStr) {
+        const usedInOldCycle = await getUsedDaysForCycle(
+          employeeId, leaveType, storedCycleStart, storedCycleEnd
+        );
+        const yearlyLimit   = Number(policy.yearly_limit || 0);
+        const unusedBalance = Math.max(yearlyLimit - usedInOldCycle, 0);
+        const newCFBalance  = carryForwardEnabled ? unusedBalance : 0;
+
+        await archiveExpiredLeaveBalance({
+          employeeId,
+          leaveType,
+          cycleStart: storedCycleStart,
+          cycleEnd:   storedCycleEnd,
+          earnedDays: yearlyLimit,
+          usedDays:   usedInOldCycle,
+          expiredDays: carryForwardEnabled ? 0 : unusedBalance,
+          renewalType,
+        });
+
+        await upsertEmployeeLeaveBalance({
+          employeeId,
+          leaveType,
+          usedDays: 0,
+          balance: 0,          // balance is computed live for yearly-limit types
+          cycleStart,
+          cycleEnd,
+          carryForwardBalance: newCFBalance,
+        });
+
+        console.log(
+          `[LeaveSync:NonRuleBased] Cycle rolled over for employee ${employeeId} (${leaveType}). ` +
+          `Previous: ${storedCycleStart}→${storedCycleEnd}. ` +
+          `CF=${carryForwardEnabled}, unused=${unusedBalance}, carryForward=${newCFBalance}`
+        );
+
+        return { synced: true, carryForwardBalance: newCFBalance };
+      } else {
+        // Renewal mode changed — stored cycle belongs to the old renewal mode and has not ended.
+        // Do NOT archive the old DOJ/CY cycle. Instead, look up the previous cycle under
+        // the NEW renewal type and backfill carry-forward from it if it has completed.
+        const prevCycleRefRM = new Date(cycleStart);
+        prevCycleRefRM.setUTCDate(prevCycleRefRM.getUTCDate() - 1); // one day before new cycle start
+        const { start: prevCycleStartRM, end: prevCycleEndRM } = getLeaveCycle(
+          policy.employee_created_at, prevCycleRefRM, renewalType
+        );
+        const jdStr = new Date(policy.employee_created_at).toISOString().split('T')[0];
+
+        if (prevCycleStartRM < cycleStart && prevCycleEndRM < todayStr && jdStr <= prevCycleEndRM) {
+          // A completed cycle exists under the new renewal type — backfill carry-forward.
+          const usedInPrev = await getUsedDaysForCycle(employeeId, leaveType, prevCycleStartRM, prevCycleEndRM);
+          const yearlyLimitV = Number(policy.yearly_limit || 0);
+          const unusedV = Math.max(yearlyLimitV - usedInPrev, 0);
+          const newCFBalance = carryForwardEnabled ? unusedV : 0;
+
+          if (yearlyLimitV > 0 || usedInPrev > 0) {
+            await archiveExpiredLeaveBalance({
+              employeeId,
+              leaveType,
+              cycleStart: prevCycleStartRM,
+              cycleEnd:   prevCycleEndRM,
+              earnedDays: yearlyLimitV,
+              usedDays:   usedInPrev,
+              expiredDays: carryForwardEnabled ? 0 : unusedV,
+              renewalType,
+            });
+          }
+
+          await upsertEmployeeLeaveBalance({
+            employeeId,
+            leaveType,
+            usedDays: 0,
+            balance: 0,
+            cycleStart,
+            cycleEnd,
+            carryForwardBalance: newCFBalance,
+          });
+
+          console.log(
+            `[LeaveSync:NonRuleBased] Renewal mode change for employee ${employeeId} (${leaveType}). ` +
+            `Backfilled ${renewalType} prev cycle: ${prevCycleStartRM}→${prevCycleEndRM}. ` +
+            `CF=${carryForwardEnabled}, unused=${unusedV}, carried=${newCFBalance}`
+          );
+          return { synced: true, carryForwardBalance: newCFBalance };
+        } else {
+          // No completed cycle under the new renewal type — just reset cycle tracking.
+          console.log(
+            `[LeaveSync:NonRuleBased] Renewal mode change for employee ${employeeId} (${leaveType}). ` +
+            `No completed ${renewalType} prev cycle to backfill. Resetting cycle tracking.`
+          );
+          await upsertEmployeeLeaveBalance({
+            employeeId,
+            leaveType,
+            usedDays: 0,
+            balance: 0,
+            cycleStart,
+            cycleEnd,
+            carryForwardBalance: 0,
+          });
+          return { synced: true, carryForwardBalance: 0 };
+        }
+      }
+    }
+    // Same cycle — verify carry_forward_balance is not stale from a bad backfill.
+    // If this is the employee's very first cycle (cycle_start == joining date), there is
+    // no prior cycle to carry forward from, so carry_forward_balance must be 0.
+    const joiningDateStr = new Date(policy.employee_created_at).toISOString().split('T')[0];
+    const isFirstCycle = storedCycleStart === joiningDateStr;
+    const storedCFBalance = Number(existingRow.carry_forward_balance || 0);
+    if (isFirstCycle && storedCFBalance > 0) {
+      // Stale carry-forward detected — clear it.
+      console.log(
+        `[LeaveSync:NonRuleBased] Clearing stale carry_forward_balance=${storedCFBalance} ` +
+        `for employee ${employeeId} (${leaveType}) — first cycle, no prior cycle exists.`
+      );
+      await upsertEmployeeLeaveBalance({
+        employeeId,
+        leaveType,
+        usedDays: Number(existingRow.used_days || 0),
+        balance:  Number(existingRow.balance  || 0),
+        cycleStart,
+        cycleEnd,
+        carryForwardBalance: 0,
+      });
+      return { synced: true, reason: 'cleared_stale_cf', carryForwardBalance: 0 };
+    }
+    return { synced: false, reason: 'same_cycle', carryForwardBalance: storedCFBalance };
+
+  } else {
+    // No row or null cycle_start — first time this employee is synced for this type.
+    // Attempt to backfill the immediately preceding cycle.
+    try {
+      const prevCycleRef = new Date(cycleStart);
+      prevCycleRef.setUTCDate(prevCycleRef.getUTCDate() - 1);
+
+      const { start: prevCycleStart, end: prevCycleEnd } = getLeaveCycle(
+        policy.employee_created_at,
+        prevCycleRef,
+        renewalType
+      );
+
+      // Guard 1: previous cycle must be earlier than the current one.
+      // Guard 2: previous cycle must have actually ended (cycle_end < today).
+      // Guard 3: the employee must have been active during the previous cycle
+      //          (joining date on or before the last day of that cycle).
+      //          For DOJ mode: joiningDate=2025-08-01, prevCycleEnd=2025-07-31 → blocked (phantom).
+      //          For Calendar Year: joiningDate=2025-08-01, prevCycleEnd=2025-12-31 → allowed.
+      const joiningDateStr = new Date(policy.employee_created_at).toISOString().split('T')[0];
+      if (prevCycleStart < cycleStart && prevCycleEnd < todayStr && joiningDateStr <= prevCycleEnd) {
+        const usedInOldCycle = await getUsedDaysForCycle(
+          employeeId, leaveType, prevCycleStart, prevCycleEnd
+        );
+        const yearlyLimit   = Number(policy.yearly_limit || 0);
+        const unusedBalance = Math.max(yearlyLimit - usedInOldCycle, 0);
+        const newCFBalance  = carryForwardEnabled ? unusedBalance : 0;
+
+        if (yearlyLimit > 0 || usedInOldCycle > 0) {
+          await archiveExpiredLeaveBalance({
+            employeeId,
+            leaveType,
+            cycleStart: prevCycleStart,
+            cycleEnd:   prevCycleEnd,
+            earnedDays: yearlyLimit,
+            usedDays:   usedInOldCycle,
+            expiredDays: carryForwardEnabled ? 0 : unusedBalance,
+            renewalType,
+          });
+        }
+
+        await upsertEmployeeLeaveBalance({
+          employeeId,
+          leaveType,
+          usedDays: 0,
+          balance: 0,
+          cycleStart,
+          cycleEnd,
+          carryForwardBalance: newCFBalance,
+        });
+
+        console.log(
+          `[LeaveSync:NonRuleBased] First sync backfill for employee ${employeeId} (${leaveType}). ` +
+          `CF=${carryForwardEnabled}, carryForward=${newCFBalance}`
+        );
+
+        return { synced: true, carryForwardBalance: newCFBalance };
+      }
+    } catch (backfillErr) {
+      console.warn(
+        `[LeaveSync:NonRuleBased] Backfill failed for employee ${employeeId} (${leaveType}):`,
+        backfillErr.message
+      );
+    }
+
+    // Upsert a fresh tracking row with no carry-forward
+    await upsertEmployeeLeaveBalance({
+      employeeId,
+      leaveType,
+      usedDays: 0,
+      balance: 0,
+      cycleStart,
+      cycleEnd,
+      carryForwardBalance: 0,
+    });
+
+    return { synced: true, carryForwardBalance: 0 };
+  }
 };
 
 /**
@@ -692,6 +1038,9 @@ const getOrganizationLeaveBalanceReport = async (organizationId) => {
     [organizationId]
   );
 
+  // Non-rule-based leave types that support carry-forward tracking
+  const NON_RULE_BASED_CF_TYPES = ['sick', 'personal', 'paternity', 'vacation', 'unpaid'];
+
   const report = await Promise.all(
     employeeResult.rows.map(async (employee) => {
       try {
@@ -710,6 +1059,18 @@ const getOrganizationLeaveBalanceReport = async (organizationId) => {
           `Casual leave sync failed for employee ${employee.employee_id}:`,
           syncErr.message
         );
+      }
+
+      // Sync carry-forward for yearly-limit leave types
+      for (const leaveType of NON_RULE_BASED_CF_TYPES) {
+        try {
+          await syncNonRuleBasedLeaveForEmployee(employee.employee_id, leaveType);
+        } catch (syncErr) {
+          console.error(
+            `Non-rule-based CF sync failed for employee ${employee.employee_id} (${leaveType}):`,
+            syncErr.message
+          );
+        }
       }
 
       const balances = await mergeCompOffIntoBalances(
@@ -746,6 +1107,7 @@ module.exports = {
   upsertEmployeeLeaveBalance,
   archiveExpiredLeaveBalance,
   syncEarnedLeaveBalanceForEmployee,
+  syncNonRuleBasedLeaveForEmployee,
   getOrganizationLeaveBalanceReport,
   getEmployeeLeaveBalanceHistory,
 };

@@ -537,7 +537,12 @@ const syncEarnedLeaveBalanceForEmployee = async (employeeId, type = 'earned', da
 
       // Guard 1: previous cycle must be a genuinely different (earlier) cycle.
       // Guard 2: previous cycle must have actually ended (cycle_end < today).
-      if (prevCycleStart < cycleStart && prevCycleEnd < todayStr) {
+      // Guard 3: the employee must have been active during the previous cycle
+      //          (joining date on or before the last day of that cycle).
+      //          For DOJ mode: joiningDate=2025-08-01, prevCycleEnd=2025-07-31 → blocked (phantom).
+      //          For Calendar Year: joiningDate=2025-08-01, prevCycleEnd=2025-12-31 → allowed.
+      const joiningDateStr = new Date(policy.employee_created_at).toISOString().split('T')[0];
+      if (prevCycleStart < cycleStart && prevCycleEnd < todayStr && joiningDateStr <= prevCycleEnd) {
         const prevConsumed = await getConsumedEarnedLeaveDays(
           employeeId, prevCycleStart, prevCycleEnd, type
         );
@@ -792,15 +797,95 @@ const syncNonRuleBasedLeaveForEmployee = async (employeeId, leaveType) => {
 
         return { synced: true, carryForwardBalance: newCFBalance };
       } else {
-        // Renewal mode changed but old cycle hasn't ended — just update cycle tracking
-        console.log(
-          `[LeaveSync:NonRuleBased] Renewal mode change for employee ${employeeId} (${leaveType}). ` +
-          `Stored cycle ${storedCycleStart}→${storedCycleEnd} not yet ended. Skipping archive.`
+        // Renewal mode changed — stored cycle belongs to the old renewal mode and has not ended.
+        // Do NOT archive the old DOJ/CY cycle. Instead, look up the previous cycle under
+        // the NEW renewal type and backfill carry-forward from it if it has completed.
+        const prevCycleRefRM = new Date(cycleStart);
+        prevCycleRefRM.setUTCDate(prevCycleRefRM.getUTCDate() - 1); // one day before new cycle start
+        const { start: prevCycleStartRM, end: prevCycleEndRM } = getLeaveCycle(
+          policy.employee_created_at, prevCycleRefRM, renewalType
         );
+        const jdStr = new Date(policy.employee_created_at).toISOString().split('T')[0];
+
+        if (prevCycleStartRM < cycleStart && prevCycleEndRM < todayStr && jdStr <= prevCycleEndRM) {
+          // A completed cycle exists under the new renewal type — backfill carry-forward.
+          const usedInPrev = await getUsedDaysForCycle(employeeId, leaveType, prevCycleStartRM, prevCycleEndRM);
+          const yearlyLimitV = Number(policy.yearly_limit || 0);
+          const unusedV = Math.max(yearlyLimitV - usedInPrev, 0);
+          const newCFBalance = carryForwardEnabled ? unusedV : 0;
+
+          if (yearlyLimitV > 0 || usedInPrev > 0) {
+            await archiveExpiredLeaveBalance({
+              employeeId,
+              leaveType,
+              cycleStart: prevCycleStartRM,
+              cycleEnd:   prevCycleEndRM,
+              earnedDays: yearlyLimitV,
+              usedDays:   usedInPrev,
+              expiredDays: carryForwardEnabled ? 0 : unusedV,
+              renewalType,
+            });
+          }
+
+          await upsertEmployeeLeaveBalance({
+            employeeId,
+            leaveType,
+            usedDays: 0,
+            balance: 0,
+            cycleStart,
+            cycleEnd,
+            carryForwardBalance: newCFBalance,
+          });
+
+          console.log(
+            `[LeaveSync:NonRuleBased] Renewal mode change for employee ${employeeId} (${leaveType}). ` +
+            `Backfilled ${renewalType} prev cycle: ${prevCycleStartRM}→${prevCycleEndRM}. ` +
+            `CF=${carryForwardEnabled}, unused=${unusedV}, carried=${newCFBalance}`
+          );
+          return { synced: true, carryForwardBalance: newCFBalance };
+        } else {
+          // No completed cycle under the new renewal type — just reset cycle tracking.
+          console.log(
+            `[LeaveSync:NonRuleBased] Renewal mode change for employee ${employeeId} (${leaveType}). ` +
+            `No completed ${renewalType} prev cycle to backfill. Resetting cycle tracking.`
+          );
+          await upsertEmployeeLeaveBalance({
+            employeeId,
+            leaveType,
+            usedDays: 0,
+            balance: 0,
+            cycleStart,
+            cycleEnd,
+            carryForwardBalance: 0,
+          });
+          return { synced: true, carryForwardBalance: 0 };
+        }
       }
     }
-    // Same cycle — nothing to do
-    return { synced: false, reason: 'same_cycle', carryForwardBalance: Number(existingRow.carry_forward_balance || 0) };
+    // Same cycle — verify carry_forward_balance is not stale from a bad backfill.
+    // If this is the employee's very first cycle (cycle_start == joining date), there is
+    // no prior cycle to carry forward from, so carry_forward_balance must be 0.
+    const joiningDateStr = new Date(policy.employee_created_at).toISOString().split('T')[0];
+    const isFirstCycle = storedCycleStart === joiningDateStr;
+    const storedCFBalance = Number(existingRow.carry_forward_balance || 0);
+    if (isFirstCycle && storedCFBalance > 0) {
+      // Stale carry-forward detected — clear it.
+      console.log(
+        `[LeaveSync:NonRuleBased] Clearing stale carry_forward_balance=${storedCFBalance} ` +
+        `for employee ${employeeId} (${leaveType}) — first cycle, no prior cycle exists.`
+      );
+      await upsertEmployeeLeaveBalance({
+        employeeId,
+        leaveType,
+        usedDays: Number(existingRow.used_days || 0),
+        balance:  Number(existingRow.balance  || 0),
+        cycleStart,
+        cycleEnd,
+        carryForwardBalance: 0,
+      });
+      return { synced: true, reason: 'cleared_stale_cf', carryForwardBalance: 0 };
+    }
+    return { synced: false, reason: 'same_cycle', carryForwardBalance: storedCFBalance };
 
   } else {
     // No row or null cycle_start — first time this employee is synced for this type.
@@ -815,7 +900,14 @@ const syncNonRuleBasedLeaveForEmployee = async (employeeId, leaveType) => {
         renewalType
       );
 
-      if (prevCycleStart < cycleStart && prevCycleEnd < todayStr) {
+      // Guard 1: previous cycle must be earlier than the current one.
+      // Guard 2: previous cycle must have actually ended (cycle_end < today).
+      // Guard 3: the employee must have been active during the previous cycle
+      //          (joining date on or before the last day of that cycle).
+      //          For DOJ mode: joiningDate=2025-08-01, prevCycleEnd=2025-07-31 → blocked (phantom).
+      //          For Calendar Year: joiningDate=2025-08-01, prevCycleEnd=2025-12-31 → allowed.
+      const joiningDateStr = new Date(policy.employee_created_at).toISOString().split('T')[0];
+      if (prevCycleStart < cycleStart && prevCycleEnd < todayStr && joiningDateStr <= prevCycleEnd) {
         const usedInOldCycle = await getUsedDaysForCycle(
           employeeId, leaveType, prevCycleStart, prevCycleEnd
         );

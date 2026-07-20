@@ -9,15 +9,20 @@ const bedrockClient = new BedrockRuntimeClient({
   },
 });
 
-const extractTasksFromTranscript = async (transcript) => {
-  const systemPrompt = `You are an expert AI Project Manager. Your job is to extract tasks and action items from meeting transcripts.
+const extractTasksFromTranscript = async (transcript, employeeNames = []) => {
+  const empListStr = Array.isArray(employeeNames) && employeeNames.length > 0
+    ? `Available Workspace Employees for assignment: [${employeeNames.join(", ")}]. Try your best to match mentioned assignees to these exact names.`
+    : '';
+
+  const systemPrompt = `You are an expert AI Project Manager. Your job is to extract tasks and action items from meeting transcripts or spoken dictation.
 Current Date: ${new Date().toISOString().split('T')[0]}
+${empListStr}
 
 Extract all distinct tasks from the provided transcript.
 For each task, return a JSON object with these EXACT keys:
 - title: (string) Short, actionable task title.
-- assignee_name: (string) Name of the person the task is assigned to. If unassigned, use "Unassigned".
-- due_date: (string) ISO date (YYYY-MM-DD) if a deadline is mentioned or implied. If none, return null.
+- assignee_name: (string) Name of the person the task is assigned to. If unassigned or unclear, use "Unassigned". Match to available workspace employees if possible.
+- due_date: (string) ISO date (YYYY-MM-DD) if a deadline is mentioned or implied (e.g. "by next Friday", "tomorrow"). If none, return null.
 - kpi: (string) The expected outcome, target, or KPI for the task. If none, return null.
 - task_type: (string) Must be one of: "master", "daily", or "weekly". Master tasks are large/project-level. Daily/weekly are regular tasks. Default to "daily" if unsure.
 

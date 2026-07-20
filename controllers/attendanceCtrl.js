@@ -271,8 +271,8 @@ const getAllAttendance = async (req, res) => {
 
       return {
         ...row,
-        raw_clock_in: row.clock_in,
-        raw_clock_out: row.clock_out,
+        raw_clock_in: inTime ? inTime.toISOString() : null,
+        raw_clock_out: outTime ? outTime.toISOString() : null,
         clock_in: inTime?.toLocaleTimeString('en-IN', {
           hour: '2-digit',
           minute: '2-digit',
@@ -388,8 +388,8 @@ const getParticularAttendance = async (req, res) => {
 
       return {
         ...row,
-        raw_clock_in: row.clock_in,
-        raw_clock_out: row.clock_out,
+        raw_clock_in: inTime ? inTime.toISOString() : null,
+        raw_clock_out: outTime ? outTime.toISOString() : null,
         clock_in: inTime?.toLocaleTimeString('en-IN', {
           hour: '2-digit',
           minute: '2-digit',

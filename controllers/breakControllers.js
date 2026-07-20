@@ -231,10 +231,20 @@ const getAttendanceBreakSummary = async (req, res) => {
             summaryMap[d].formatted = formatSeconds(secs);
         });
 
+        const processedBreaks = result.rows.map(row => {
+            const bStart = row.break_start ? new Date(new Date(row.break_start).getTime() + 330 * 60 * 1000).toISOString() : null;
+            const bEnd = row.break_end ? new Date(new Date(row.break_end).getTime() + 330 * 60 * 1000).toISOString() : null;
+            return {
+                ...row,
+                break_start: bStart,
+                break_end: bEnd
+            };
+        });
+
         res.status(200).json({
             success: true,
             data: summaryMap,
-            breaks: result.rows
+            breaks: processedBreaks
         });
     } catch (error) {
         console.error("Fetch Attendance Break Summary Error:", error);

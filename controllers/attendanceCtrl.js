@@ -271,6 +271,8 @@ const getAllAttendance = async (req, res) => {
 
       return {
         ...row,
+        raw_clock_in: row.clock_in,
+        raw_clock_out: row.clock_out,
         clock_in: inTime?.toLocaleTimeString('en-IN', {
           hour: '2-digit',
           minute: '2-digit',
@@ -386,6 +388,8 @@ const getParticularAttendance = async (req, res) => {
 
       return {
         ...row,
+        raw_clock_in: row.clock_in,
+        raw_clock_out: row.clock_out,
         clock_in: inTime?.toLocaleTimeString('en-IN', {
           hour: '2-digit',
           minute: '2-digit',

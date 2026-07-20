@@ -1,14 +1,14 @@
 const { extractTasksFromTranscript } = require("../services/aiService");
 
 const extractTasks = async (req, res) => {
-  const { transcript } = req.body;
+  const { transcript, employee_names } = req.body;
 
   if (!transcript || transcript.trim().length === 0) {
     return res.status(400).json({ statusCode: 400, message: "Transcript text is required" });
   }
 
   try {
-    const tasks = await extractTasksFromTranscript(transcript);
+    const tasks = await extractTasksFromTranscript(transcript, employee_names);
     res.status(200).json({ statusCode: 200, data: tasks, message: "Tasks extracted successfully" });
   } catch (error) {
     console.error("Controller Error in extractTasks:", error);

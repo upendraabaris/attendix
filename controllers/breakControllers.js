@@ -174,9 +174,77 @@ const getEmployeeBreakHistory = async (req, res) => {
     }
 };
 
+// -----------------------------------
+// GET ATTENDANCE BREAK SUMMARY
+// -----------------------------------
+const getAttendanceBreakSummary = async (req, res) => {
+    try {
+        const { employeeId } = req.params;
+        const { startDate, endDate } = req.query;
+
+        if (!employeeId) {
+            return res.status(400).json({ success: false, message: "Employee ID is required" });
+        }
+
+        const start = startDate || new Date(new Date().setDate(1)).toISOString().split('T')[0];
+        const end = endDate || new Date().toISOString().split('T')[0];
+
+        const result = await pool.query(
+            `SELECT 
+                id,
+                break_start,
+                break_end,
+                is_active,
+                TO_CHAR(break_start AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') as break_date,
+                ROUND(EXTRACT(EPOCH FROM (COALESCE(break_end, NOW()) - break_start)))::integer as duration_seconds
+             FROM employee_breaks
+             WHERE employee_id = $1
+               AND (break_start AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $2::date AND $3::date
+             ORDER BY break_start ASC`,
+            [employeeId, start, end]
+        );
+
+        const formatSeconds = (totalSecs) => {
+            const secs = Math.max(0, Math.floor(totalSecs));
+            const hrs = Math.floor(secs / 3600);
+            const mins = Math.floor((secs % 3600) / 60);
+            const remainingSecs = secs % 60;
+
+            const parts = [];
+            if (hrs > 0) parts.push(`${hrs}h`);
+            if (mins > 0 || hrs > 0) parts.push(`${mins}m`);
+            parts.push(`${remainingSecs}s`);
+            return parts.join(" ");
+        };
+
+        const summaryMap = {};
+        result.rows.forEach(row => {
+            const secs = parseInt(row.duration_seconds) || 0;
+            if (!summaryMap[row.break_date]) {
+                summaryMap[row.break_date] = { total_seconds: 0, formatted: "0s" };
+            }
+            summaryMap[row.break_date].total_seconds += secs;
+        });
+
+        Object.keys(summaryMap).forEach(d => {
+            const secs = summaryMap[d].total_seconds;
+            summaryMap[d].formatted = formatSeconds(secs);
+        });
+
+        res.status(200).json({
+            success: true,
+            data: summaryMap,
+            breaks: result.rows
+        });
+    } catch (error) {
+        console.error("Fetch Attendance Break Summary Error:", error);
+        res.status(500).json({ success: false, message: "Failed to fetch break summary" });
+    }
+};
 
 module.exports = {
     startBreak,
     endBreak,
-    getEmployeeBreakHistory
+    getEmployeeBreakHistory,
+    getAttendanceBreakSummary
 };

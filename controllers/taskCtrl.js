@@ -635,7 +635,7 @@ const deleteTask = async (req, res) => {
 };
 
 const quickAddTask = async (req, res) => {
-  const { title, hours_worked, date, workspace_id, master_task_id, employee_id, workspace_name, task_type, kpi, target_val, actual_result, remark, status, priority } = req.body;
+  const { title, hours_worked, date, workspace_id, master_task_id, employee_id, workspace_name, task_type, kpi, target_val, actual_result, remark, status, priority, attachment } = req.body;
   const adminOrEmpId = req.user.employee_id;
   const finalStatus = status || 'open';
   const isCompleted = finalStatus === 'closed';
@@ -648,8 +648,8 @@ const quickAddTask = async (req, res) => {
     const result = await pool.query(
       `INSERT INTO tasks (
          title, hours_worked, due_date, workspace_id, master_task_id, employee_id, workspace_name, status, completed,
-         task_type, kpi, target_val, actual_result, remark, priority
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         task_type, kpi, target_val, actual_result, remark, priority, attachment
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        RETURNING *`,
       [
         title,
@@ -666,7 +666,8 @@ const quickAddTask = async (req, res) => {
         target_val || null,
         actual_result || null,
         remark || null,
-        priority || 'medium'
+        priority || 'medium',
+        attachment || null
       ]
     );
 
@@ -686,7 +687,7 @@ const quickAddTask = async (req, res) => {
 };
 
 const updateTaskLogInline = async (req, res) => {
-  const { taskId, title, hours_worked, kpi, target_val, actual_result, remark, status, priority } = req.body;
+  const { taskId, title, hours_worked, kpi, target_val, actual_result, remark, status, priority, attachment } = req.body;
   const userEmpId = req.user?.employee_id;
   const role = req.user?.role?.toLowerCase() || '';
   const isAdmin = role.includes('admin');
@@ -717,11 +718,12 @@ const updateTaskLogInline = async (req, res) => {
            remark = COALESCE($6, remark),
            status = COALESCE($7, status),
            priority = COALESCE($9, priority),
+           attachment = COALESCE($10, attachment),
            completed = CASE WHEN COALESCE($7, status) = 'closed' THEN true ELSE completed END,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $8
        RETURNING *`,
-      [title, hours_worked, kpi, target_val, actual_result, remark, status, taskId, priority]
+      [title, hours_worked, kpi, target_val, actual_result, remark, status, taskId, priority, attachment]
     );
 
     if (result.rowCount === 0) {
@@ -855,7 +857,7 @@ const startTask = async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE tasks
-       SET status = 'In Progress',
+       SET status = 'in progress',
            started_at = CURRENT_TIMESTAMP
        WHERE id = $1
          AND employee_id = $2
@@ -893,7 +895,7 @@ const endTask = async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE tasks
-       SET status = 'Completed',
+       SET status = 'close',
            completed = true,
            ended_at = CURRENT_TIMESTAMP
        WHERE id = $1

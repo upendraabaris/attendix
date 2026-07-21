@@ -895,7 +895,7 @@ const endTask = async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE tasks
-       SET status = 'close',
+       SET status = 'closed',
            completed = true,
            ended_at = CURRENT_TIMESTAMP
        WHERE id = $1

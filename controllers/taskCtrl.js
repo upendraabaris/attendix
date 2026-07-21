@@ -831,7 +831,7 @@ const getTrackerTasks = async (req, res) => {
        WHERE employee_id = $1
        AND task_type = 'daily'
        AND LOWER(status) IN ('open', 'in progress')
-       AND DATE(created_at) = CURRENT_DATE
+       AND due_date = CURRENT_DATE
        ORDER BY created_at DESC`,
       [employeeId]
     );

@@ -6,6 +6,7 @@ const {
     startBreak,
     endBreak,
     getEmployeeBreakHistory,
+    getTodayBreakStatus,
     getAttendanceBreakSummary
 } = require("../controllers/breakControllers");
 
@@ -22,6 +23,7 @@ router.get(
     authenticate,
     getAttendanceBreakSummary
 );
+router.get("/today-status", authenticate, getTodayBreakStatus);
 
 // Admin only route for detailed break history
 router.get(

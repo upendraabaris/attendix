@@ -173,6 +173,71 @@ const getEmployeeBreakHistory = async (req, res) => {
         res.status(500).json({ success: false, message: "Failed to fetch break history" });
     }
 };
+const getTodayBreakStatus = async (req, res) => {
+    try {
+        const employeeId = req.user.employee_id;
+
+        const result = await pool.query(
+            `
+      SELECT
+        COALESCE(
+          SUM(
+            EXTRACT(
+              EPOCH FROM (
+                break_end - break_start
+              )
+            )
+          ) FILTER (
+            WHERE is_active = false
+              AND break_end IS NOT NULL
+          ),
+          0
+        )::integer AS total_break_seconds,
+
+        COALESCE(
+          BOOL_OR(is_active = true),
+          false
+        ) AS is_on_break,
+
+        MAX(break_start) FILTER (
+          WHERE is_active = true
+        ) AS active_break_start
+
+      FROM employee_breaks
+      WHERE employee_id = $1
+        AND (
+          break_start AT TIME ZONE 'UTC'
+          AT TIME ZONE 'Asia/Kolkata'
+        )::date =
+        (
+          CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'
+        )::date
+      `,
+            [employeeId]
+        );
+
+        const data = result.rows[0];
+
+        return res.status(200).json({
+            success: true,
+            message: "Today break status fetched successfully",
+            data: {
+                totalBreakSeconds: Number(
+                    data.total_break_seconds || 0
+                ),
+                isOnBreak: Boolean(data.is_on_break),
+                breakStart: data.active_break_start || null,
+            },
+        });
+    } catch (error) {
+        console.error("Get Today Break Status Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch today break status",
+        });
+    }
+};
 
 // -----------------------------------
 // GET ATTENDANCE BREAK SUMMARY
@@ -256,5 +321,6 @@ module.exports = {
     startBreak,
     endBreak,
     getEmployeeBreakHistory,
+    getTodayBreakStatus,
     getAttendanceBreakSummary
 };

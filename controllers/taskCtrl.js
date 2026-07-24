@@ -929,7 +929,7 @@ const endTask = async (req, res) => {
 };
 
 const getLast7DaysTasks = async (req, res) => {
-  const { employee_id, date, status } = req.query;
+  const { employee_id, date, status, organization_id } = req.query;
 
   try {
     let query = `
@@ -940,6 +940,12 @@ const getLast7DaysTasks = async (req, res) => {
     `;
     const values = [];
     let i = 1;
+
+    // Organization filter (workspaces table ke through)
+    if (organization_id) {
+      query += ` AND w.organization_id = $${i++}`;
+      values.push(organization_id);
+    }
 
     // User filter
     if (employee_id) {

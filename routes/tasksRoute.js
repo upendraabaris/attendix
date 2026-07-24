@@ -13,6 +13,7 @@ const {
   getTrackerTasks,
   startTask,
   endTask,
+  getLast7DaysTasks
 } = require("../controllers/taskCtrl");
 const { authenticate } = require("../middleware/authMiddleware");
 
@@ -28,6 +29,7 @@ router.get("/tracker", authenticate, getTrackerTasks);
 router.post("/tracker/start", authenticate, startTask);
 router.post("/tracker/end", authenticate, endTask);
 router.delete("/:taskId", authenticate, deleteTask);
+router.get("/admin/tasks/last-7-days", authenticate, getLast7DaysTasks);
 
 // ✅ New route to get employee-wise workspaces
 // router.get("/employees/workspaces", authenticate, getEmployeesWorkspaces);

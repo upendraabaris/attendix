@@ -928,6 +928,66 @@ const endTask = async (req, res) => {
   }
 };
 
+const getLast7DaysTasks = async (req, res) => {
+  const { employee_id, date, status } = req.query;
+
+  try {
+    let query = `
+      SELECT t.*, w.name AS workspace_name
+      FROM public.tasks t
+      LEFT JOIN public.workspaces w ON w.id = t.workspace_id
+      WHERE 1=1
+    `;
+    const values = [];
+    let i = 1;
+
+    // User filter
+    if (employee_id) {
+      query += ` AND t.employee_id = $${i++}`;
+      values.push(employee_id);
+    }
+
+    // Date filter -> specific date diya to usi din ke tasks, warna default last 7 days
+    if (date) {
+      query += ` AND t.due_date = $${i++}`;
+      values.push(date);
+    } else {
+      query += ` AND t.due_date >= (CURRENT_DATE - INTERVAL '7 days')`;
+      query += ` AND t.due_date <= CURRENT_DATE`;
+    }
+
+    // Status filter
+    if (status && status !== "all") {
+      query += ` AND t.status = $${i++}`;
+      values.push(status);
+    }
+
+    query += ` ORDER BY t.due_date DESC`;
+
+    const result = await pool.query(query, values);
+
+    const formattedTasks = result.rows.map((task) => ({
+      ...task,
+      workspace_name: task.workspace_name || "-",
+      due_date: formatDate(task.due_date),
+      recurrence_end_date: formatDate(task.recurrence_end_date),
+    }));
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Tasks fetched successfully",
+      data: formattedTasks,
+    });
+  } catch (error) {
+    console.error("Error fetching tasks:", error);
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to fetch tasks",
+      error: error.message,
+    });
+  }
+};
+
 
 module.exports = {
   createTask,
@@ -942,4 +1002,5 @@ module.exports = {
   getTrackerTasks,
   startTask,
   endTask,
+  getLast7DaysTasks
 };

@@ -929,23 +929,20 @@ const endTask = async (req, res) => {
 };
 
 const getLast7DaysTasks = async (req, res) => {
-  const { employee_id, date, status, organization_id } = req.query;
+  const { employee_id, date, status } = req.query;
+  const organizationId = req.user?.organization_id;
 
   try {
     let query = `
-      SELECT t.*, w.name AS workspace_name
+      SELECT t.*, w.name AS workspace_name, o.name AS organization_name
       FROM public.tasks t
       LEFT JOIN public.workspaces w ON w.id = t.workspace_id
-      WHERE 1=1
+      LEFT JOIN public.employees e ON t.employee_id = e.id
+      LEFT JOIN public.organizations o ON e.organization_id = o.id
+      WHERE e.organization_id = $1
     `;
-    const values = [];
-    let i = 1;
-
-    // Organization filter (workspaces table ke through)
-    if (organization_id) {
-      query += ` AND w.organization_id = $${i++}`;
-      values.push(organization_id);
-    }
+    const values = [organizationId];
+    let i = 2;
 
     // User filter
     if (employee_id) {
@@ -975,6 +972,7 @@ const getLast7DaysTasks = async (req, res) => {
     const formattedTasks = result.rows.map((task) => ({
       ...task,
       workspace_name: task.workspace_name || "-",
+      organization_name: task.organization_name || "-",
       due_date: formatDate(task.due_date),
       recurrence_end_date: formatDate(task.recurrence_end_date),
     }));

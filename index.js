@@ -82,6 +82,7 @@ const breakRoutes = require("./routes/breakRoutes");
 const supportRoute = require("./routes/supportRoute");
 const chatRoute = require("./routes/chatRoute");
 const aiRoute = require("./routes/aiRoute");
+const wfhRoutes = require("./routes/wfhRoutes");
 
 app.use("/api/attendance", attendanceRoute);
 app.use("/api/leave", leaveRoute);
@@ -102,6 +103,7 @@ app.use("/api/break", breakRoutes);
 app.use("/api/support", supportRoute);
 app.use("/api/chat", chatRoute);
 app.use("/api/ai", aiRoute);
+app.use("/api/wfh", wfhRoutes);
 
 app.get("/", (_req, res) => res.send("Hello world"));
 

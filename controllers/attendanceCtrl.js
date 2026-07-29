@@ -56,6 +56,15 @@ const clockOut = async (req, res) => {
     // Get address from coordinates
     let address = await reverseGeocodeGoogle(latitude, longitude);
 
+    await pool.query(
+      `UPDATE employee_breaks
+       SET break_end = NOW(),
+           is_active = false
+       WHERE employee_id = $1
+         AND is_active = true`,
+      [employeeId]
+    );
+
     // Call the PostgreSQL function to clock out
     const result = await pool.query(
       'SELECT * FROM clock_out($1, $2, $3, $4)',
@@ -497,7 +506,7 @@ const adminUpdateClockOut = async (req, res) => {
     // If admin_remark column doesn't exist, try without it
     if (error.message && error.message.includes('admin_remark')) {
       try {
-        const [, ] = clockOutTime.split(':').map(Number);
+        const [,] = clockOutTime.split(':').map(Number);
         const istDate = new Date(`${workDate}T${clockOutTime}:00+05:30`);
         await pool.query(
           `INSERT INTO attendance (employee_id, type, timestamp, latitude, longitude, address)

@@ -4,72 +4,80 @@ const pool = require("../configure/dbConfig");
 // START BREAK
 // -----------------------------------
 const startBreak = async (req, res) => {
-
     try {
+        const employeeId = req.user.employee_id;
 
-        const employeeId =
-            req.user.employee_id;
+        const activeBreak = await pool.query(
+            `
+      SELECT id
+      FROM employee_breaks
+      WHERE employee_id = $1
+        AND is_active = true
+      LIMIT 1
+      `,
+            [employeeId]
+        );
 
-        // CHECK ACTIVE BREAK
-        const activeBreak =
-            await pool.query(
-                `
-                SELECT *
-                FROM employee_breaks
-                WHERE employee_id = $1
-                AND is_active = true
-                `,
-                [employeeId]
-            );
-
-        if (
-            activeBreak.rows.length > 0
-        ) {
-
+        if (activeBreak.rows.length > 0) {
             return res.status(400).json({
                 success: false,
-                message:
-                    "Break already active"
+                message: "Break already active",
             });
         }
 
-        // CREATE BREAK
-        const result =
-            await pool.query(
+        let result;
+
+        try {
+            result = await pool.query(
                 `
-                INSERT INTO employee_breaks (
-                    employee_id,
-                    break_start,
-                    is_active
-                )
-                VALUES (
-                    $1,
-                    NOW(),
-                    true
-                )
-                RETURNING *
-                `,
+        INSERT INTO employee_breaks (
+          employee_id,
+          break_start,
+          break_end,
+          is_active
+        )
+        VALUES (
+          $1,
+          CURRENT_TIMESTAMP,
+          NULL,
+          true
+        )
+        RETURNING
+          id,
+          employee_id,
+          break_start,
+          break_end,
+          is_active
+        `,
                 [employeeId]
             );
+        } catch (insertError) {
+            // Postgres unique_violation error code.
+            // Iska matlab: humare SELECT check aur is INSERT ke beech
+            // ek dusri request ne pehle hi active break bana diya
+            // (race condition) — DB ke unique index ne isse pakad liya.
+            if (insertError.code === "23505") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Break already active",
+                });
+            }
 
-        res.status(200).json({
+            // Koi aur DB error hai to upar wale catch block me jaane do
+            throw insertError;
+        }
+
+        return res.status(200).json({
             success: true,
-            message:
-                "Break started successfully",
-            data: result.rows[0]
+            message: "Break started successfully",
+            data: result.rows[0],
         });
-
     } catch (error) {
+        console.error("Start Break Error:", error);
 
-        console.log(
-            "Start Break Error:",
-            error
-        );
-
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
-            message:
-                "Failed to start break"
+            message: "Failed to start break",
         });
     }
 };
@@ -78,68 +86,63 @@ const startBreak = async (req, res) => {
 // END BREAK
 // -----------------------------------
 const endBreak = async (req, res) => {
-
     try {
-
-        const employeeId =
-            req.user.employee_id;
+        const employeeId = req.user.employee_id;
 
         // CHECK ACTIVE BREAK
-        const activeBreak =
-            await pool.query(
-                `
-                SELECT *
-                FROM employee_breaks
-                WHERE employee_id = $1
-                AND is_active = true
-                `,
-                [employeeId]
-            );
+        const activeBreak = await pool.query(
+            `
+      SELECT *
+      FROM employee_breaks
+      WHERE employee_id = $1
+      AND is_active = true
+      `,
+            [employeeId]
+        );
 
-        if (
-            activeBreak.rows.length === 0
-        ) {
-
+        if (activeBreak.rows.length === 0) {
             return res.status(400).json({
                 success: false,
-                message:
-                    "No active break found"
+                message: "No active break found",
             });
         }
 
         // END BREAK
-        const result =
-            await pool.query(
-                `
-                UPDATE employee_breaks
-                SET
-                    break_end = NOW(),
-                    is_active = false
-                WHERE employee_id = $1
-                AND is_active = true
-                RETURNING *
-                `,
-                [employeeId]
-            );
-
-        res.status(200).json({
-            success: true,
-            message:
-                "Break ended successfully",
-            data: result.rows[0]
-        });
-
-    } catch (error) {
-
-        console.log(
-            "End Break Error:",
-            error
+        const result = await pool.query(
+            `
+      UPDATE employee_breaks
+      SET
+          break_end = NOW(),
+          is_active = false
+      WHERE employee_id = $1
+      AND is_active = true
+      RETURNING *
+      `,
+            [employeeId]
         );
 
-        res.status(500).json({
+        // NAYA: Agar UPDATE ne 0 rows match ki (jaise koi dusri
+        // request beech me isi break ko already end kar chuki thi),
+        // to purani galti se "success: true" mat bhejo — caller ko
+        // batao ki actual me kuch update nahi hua.
+        if (result.rows.length === 0) {
+            return res.status(409).json({
+                success: false,
+                message: "Break was already ended",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Break ended successfully",
+            data: result.rows[0],
+        });
+    } catch (error) {
+        console.error("End Break Error:", error);
+
+        return res.status(500).json({
             success: false,
-            message:
-                "Failed to end break"
+            message: "Failed to end break",
         });
     }
 };
@@ -193,16 +196,16 @@ const getTodayBreakStatus = async (req, res) => {
           ),
           0
         )::integer AS total_break_seconds,
-
+ 
         COALESCE(
           BOOL_OR(is_active = true),
           false
         ) AS is_on_break,
-
+ 
         MAX(break_start) FILTER (
           WHERE is_active = true
-        ) AS active_break_start
-
+        ) AT TIME ZONE 'UTC' AS active_break_start
+ 
       FROM employee_breaks
       WHERE employee_id = $1
         AND (
@@ -222,9 +225,7 @@ const getTodayBreakStatus = async (req, res) => {
             success: true,
             message: "Today break status fetched successfully",
             data: {
-                totalBreakSeconds: Number(
-                    data.total_break_seconds || 0
-                ),
+                totalBreakSeconds: Number(data.total_break_seconds || 0),
                 isOnBreak: Boolean(data.is_on_break),
                 breakStart: data.active_break_start || null,
             },

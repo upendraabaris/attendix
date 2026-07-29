@@ -929,7 +929,7 @@ const endTask = async (req, res) => {
 };
 
 const getLast7DaysTasks = async (req, res) => {
-  const { employee_id, date, status } = req.query;
+  const { employee_id, from_date, to_date, status } = req.query;
   const organizationId = req.user?.organization_id;
 
   try {
@@ -940,6 +940,7 @@ const getLast7DaysTasks = async (req, res) => {
       LEFT JOIN public.employees e ON t.employee_id = e.id
       LEFT JOIN public.organizations o ON e.organization_id = o.id
       WHERE e.organization_id = $1
+      AND e.status = 'active'
     `;
     const values = [organizationId];
     let i = 2;
@@ -949,11 +950,20 @@ const getLast7DaysTasks = async (req, res) => {
       query += ` AND t.employee_id = $${i++}`;
       values.push(employee_id);
     }
-
-    // Date filter -> specific date diya to usi din ke tasks, warna default last 7 days
-    if (date) {
-      query += ` AND t.due_date = $${i++}`;
-      values.push(date);
+    // Date range filter -> from_date/to_date diya to us range ke tasks, warna default last 7 days
+    if (from_date && to_date) {
+      query += ` AND t.due_date >= $${i++}`;
+      values.push(from_date);
+      query += ` AND t.due_date <= $${i++}`;
+      values.push(to_date);
+    } else if (from_date) {
+      // Only "from" given -> that date onwards
+      query += ` AND t.due_date >= $${i++}`;
+      values.push(from_date);
+    } else if (to_date) {
+      // Only "to" given -> up to that date
+      query += ` AND t.due_date <= $${i++}`;
+      values.push(to_date);
     } else {
       query += ` AND t.due_date >= (CURRENT_DATE - INTERVAL '7 days')`;
       query += ` AND t.due_date <= CURRENT_DATE`;

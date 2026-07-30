@@ -1002,6 +1002,69 @@ const getLast7DaysTasks = async (req, res) => {
   }
 };
 
+const updateTaskDuration = async (req, res) => {
+  const { taskId, hours, minutes } = req.body;
+  const employeeId = req.user.employee_id;
+  const role = req.user.role?.toLowerCase() || "";
+  const isAdmin = role.includes("admin");
+
+  const h = Number(hours) || 0;
+  const m = Number(minutes) || 0;
+
+  if (h < 0 || m < 0 || m > 59) {
+    return res.status(400).json({ statusCode: 400, message: "Invalid duration values" });
+  }
+
+  try {
+    const taskResult = await pool.query("SELECT * FROM tasks WHERE id = $1", [taskId]);
+    if (taskResult.rowCount === 0) {
+      return res.status(404).json({ statusCode: 404, message: "Task not found" });
+    }
+    const task = taskResult.rows[0];
+
+    if (!isAdmin && String(task.employee_id) !== String(employeeId)) {
+      return res.status(403).json({ statusCode: 403, message: "Unauthorized to edit this task" });
+    }
+
+    if (!task.started_at) {
+      return res.status(400).json({ statusCode: 400, message: "Task has not been started yet" });
+    }
+
+
+    if (String(task.status).toLowerCase() !== "closed") {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Only closed tasks' tracked time can be edited. Please close the task first.",
+      });
+    }
+
+    const durationMs = (h * 3600 + m * 60) * 1000;
+    const newEndedAt = new Date(new Date(task.started_at).getTime() + durationMs);
+    const totalHoursDecimal = (h + m / 60).toFixed(2);
+
+    const result = await pool.query(
+      `UPDATE tasks
+       SET ended_at = $1, hours_worked = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3
+       RETURNING *`,
+      [newEndedAt, totalHoursDecimal, taskId]
+    );
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Tracked time updated successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Error updating task duration:", error);
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to update task duration",
+      error: error.message,
+    });
+  }
+};
+
 
 module.exports = {
   createTask,
@@ -1016,5 +1079,6 @@ module.exports = {
   getTrackerTasks,
   startTask,
   endTask,
-  getLast7DaysTasks
+  getLast7DaysTasks,
+  updateTaskDuration
 };

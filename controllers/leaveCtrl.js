@@ -190,7 +190,7 @@ const createLeaveRequest = async (req, res) => {
       file: req.file,
     });
 
-    // Attempt to email the admin about the new leave request (non-blocking of API success)
+    // Attempt to email the admin (and manager) about the new leave request (non-blocking of API success)
     try {
       if (!organizationId) {
         throw new Error('Organization ID is missing in token');
@@ -214,12 +214,36 @@ const createLeaveRequest = async (req, res) => {
         [organizationId]
       );
 
-      if (!adminResult.rows.length) {
-        throw new Error(`No active admin email found for organization ${organizationId}`);
+      const adminEmail = adminResult.rows[0]?.admin_email || null;
+      const organizationName = adminResult.rows[0]?.organization_name || 'Attendix';
+
+      // 👇 Naya: employee ke manager ka email nikalo (agar manager assigned hai)
+      let managerEmail = null;
+      try {
+        const managerResult = await pool.query(
+          `
+          SELECT u.email AS manager_email
+          FROM employees e
+          JOIN employees m ON e.manager_id = m.id
+          JOIN users u ON u.employee_id = m.id
+          WHERE e.id = $1
+            AND m.status = 'active'
+            AND u.email IS NOT NULL
+          LIMIT 1
+          `,
+          [employeeId]
+        );
+        if (managerResult.rows.length > 0) {
+          managerEmail = managerResult.rows[0].manager_email;
+        }
+      } catch (managerErr) {
+        console.error('Failed to fetch manager email:', managerErr.message);
       }
 
-      const adminEmail = adminResult.rows[0].admin_email;
-      const organizationName = adminResult.rows[0].organization_name || 'Attendix';
+      if (!adminEmail && !managerEmail) {
+        throw new Error(`No active admin or manager email found for organization ${organizationId}`);
+      }
+
       // Prefer real employee name from DB to avoid sending the numeric ID
       let employeeName = null;
       try {
@@ -238,6 +262,7 @@ const createLeaveRequest = async (req, res) => {
 
       await sendNewLeaveRequestEmail({
         adminEmail,
+        managerEmail, // 👈 naya
         organizationName,
         employeeName,
         leave: {

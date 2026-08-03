@@ -215,8 +215,7 @@ const getEmployeeById = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
-
-// Update Employee
+//Update Employee (manager_id)
 
 const updateEmployee = async (req, res) => {
   const { id } = req.params; // employee ID in the URL
@@ -225,14 +224,26 @@ const updateEmployee = async (req, res) => {
     email,
     phone,
     role,
-    status // ✅ Include status from frontend
+    status, // ✅ Include status from frontend
+    manager_id
   } = req.body;
+
+  const role_check = String(req.user?.role || "").toLowerCase();
+  const isAdmin = role_check.includes("admin");
 
   try {
     const result = await pool.query(
       `SELECT * FROM update_employee($1, $2, $3, $4, $5, $6)`,
       [id, name, email, phone, role, status] // ✅ Pass 6 parameters
     );
+
+
+    if (manager_id !== undefined && isAdmin) {
+      await pool.query(
+        `UPDATE employees SET manager_id = $1 WHERE id = $2`,
+        [manager_id || null, id]
+      );
+    }
 
     return res.status(200).json({
       statusCode: 200,

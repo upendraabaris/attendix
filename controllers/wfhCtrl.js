@@ -108,10 +108,23 @@ const getMyWFHRequests = async (req, res) => {
             [employeeId]
         );
 
+        // 👇 Naya: agar iske under koi reportees hain, unki WFH requests bhi saath bhej do
+        const teamResult = await pool.query(
+            `
+      SELECT wr.*
+      FROM wfh_requests wr
+      JOIN employees e ON wr.employee_id = e.id
+      WHERE e.manager_id = $1
+      ORDER BY wr.created_at DESC
+      `,
+            [employeeId]
+        );
+
         return res.status(200).json({
             statusCode: 200,
             message: "WFH requests retrieved successfully",
             data: result.rows,
+            teamRequests: teamResult.rows,
         });
     } catch (error) {
         console.error("Error retrieving WFH requests:", error);
@@ -213,6 +226,9 @@ const getPendingWFHRequests = async (req, res) => {
 const updateWFHRequestStatus = async (req, res) => {
     const { wfhId } = req.params;
     const { status } = req.body;
+    const updatedBy = req.user.employee_id;
+    const role = String(req.user.role || "").toLowerCase();
+    const isAdmin = role.includes("admin");
 
     try {
         if (!status || !["approved", "rejected"].includes(status)) {
@@ -221,6 +237,34 @@ const updateWFHRequestStatus = async (req, res) => {
                 message: 'Status must be either "approved" or "rejected"',
             });
         }
+
+        if (!isAdmin) {
+            const wfhCheck = await pool.query(
+                `
+        SELECT e.manager_id
+        FROM wfh_requests wr
+        JOIN employees e ON wr.employee_id = e.id
+        WHERE wr.id = $1
+        `,
+                [wfhId]
+            );
+
+            if (wfhCheck.rowCount === 0) {
+                return res.status(404).json({
+                    statusCode: 404,
+                    message: "WFH request not found",
+                });
+            }
+
+            const managerId = wfhCheck.rows[0].manager_id;
+            if (String(managerId) !== String(updatedBy)) {
+                return res.status(403).json({
+                    statusCode: 403,
+                    message: "You are not authorized to approve/reject this WFH request",
+                });
+            }
+        }
+
 
         const result = await pool.query(
             `

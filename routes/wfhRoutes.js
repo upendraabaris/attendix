@@ -42,6 +42,6 @@ router.get("/admin/wfh-requests/pending", authenticate, authorizeRoles("admin"),
  * @desc Update WFH request status (approve/reject)
  * @access Private (Admin)
  */
-router.put("/update/:wfhId", authenticate, authorizeRoles("admin"), updateWFHRequestStatus);
-
+// router.put("/update/:wfhId", authenticate, authorizeRoles("admin"), updateWFHRequestStatus);
+router.put("/update/:wfhId", authenticate, updateWFHRequestStatus);
 module.exports = router;

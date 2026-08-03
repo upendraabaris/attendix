@@ -16,6 +16,79 @@ const getRequestedDays = (startDate, endDate, isHalfDay) => {
  * @route POST /api/wfh
  * @access Private (Employee)
  */
+// const createWFHRequest = async (req, res) => {
+//     const employeeId = req.user.employee_id;
+//     const organizationId = req.user.organization_id;
+//     const { startDate, endDate, reason, is_half_day } = req.body;
+//     const isHalfDay = is_half_day === true || is_half_day === "true";
+
+//     try {
+//         if (!startDate || !endDate) {
+//             return res.status(400).json({
+//                 statusCode: 400,
+//                 message: "Start date and end date are required",
+//             });
+//         }
+
+//         if (new Date(endDate) < new Date(startDate)) {
+//             return res.status(400).json({
+//                 statusCode: 400,
+//                 message: "End date cannot be before start date",
+//             });
+//         }
+
+//         if (!reason?.trim()) {
+//             return res.status(400).json({
+//                 statusCode: 400,
+//                 message: "Reason is required",
+//             });
+//         }
+
+//         if (!organizationId) {
+//             return res.status(400).json({
+//                 statusCode: 400,
+//                 message: "Organization ID missing in token",
+//             });
+//         }
+
+//         // Fetch employee name once, store it denormalized (no join needed later)
+//         let employeeName = `Employee #${employeeId}`;
+//         try {
+//             const empRes = await pool.query("SELECT name FROM employees WHERE id = $1", [employeeId]);
+//             if (empRes.rows[0]?.name) {
+//                 employeeName = empRes.rows[0].name;
+//             }
+//         } catch (nameErr) {
+//             console.error("Could not resolve employee name for WFH request:", nameErr.message);
+//         }
+
+//         const result = await pool.query(
+//             `
+//       INSERT INTO wfh_requests (
+//         employee_id, employee_name, organization_id,
+//         start_date, end_date, reason, is_half_day,
+//         status, created_at
+//       )
+//       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())
+//       RETURNING *
+//       `,
+//             [employeeId, employeeName, organizationId, startDate, endDate, reason || null, isHalfDay]
+//         );
+
+//         return res.status(201).json({
+//             statusCode: 201,
+//             message: "WFH request submitted successfully",
+//             data: result.rows[0],
+//         });
+//     } catch (error) {
+//         console.error("Error creating WFH request:", error);
+//         return res.status(500).json({
+//             statusCode: 500,
+//             message: "Failed to submit WFH request",
+//             error: error.message,
+//         });
+//     }
+// };
 const createWFHRequest = async (req, res) => {
     const employeeId = req.user.employee_id;
     const organizationId = req.user.organization_id;
@@ -75,6 +148,71 @@ const createWFHRequest = async (req, res) => {
             [employeeId, employeeName, organizationId, startDate, endDate, reason || null, isHalfDay]
         );
 
+        // Attempt to email the manager + admin about the new WFH request (non-blocking of API success)
+        try {
+            const adminResult = await pool.query(
+                `
+        SELECT
+          u.email AS admin_email,
+          o.name AS organization_name
+        FROM organizations o
+        JOIN employees e ON e.organization_id = o.id
+        JOIN users u ON u.employee_id = e.id
+        WHERE o.id = $1
+          AND e.role = 'admin'
+          AND e.status = 'active'
+          AND u.email IS NOT NULL
+        ORDER BY e.id ASC
+        LIMIT 1
+        `,
+                [organizationId]
+            );
+
+            if (!adminResult.rows.length) {
+                throw new Error(`No active admin email found for organization ${organizationId}`);
+            }
+
+            const adminEmail = adminResult.rows[0].admin_email;
+            const organizationName = adminResult.rows[0].organization_name || "Attendix";
+
+            // Resolve the employee's manager email (if they have a manager), so
+            // both the manager and the admin get notified about the new WFH request.
+            let managerEmail = null;
+            try {
+                const managerRes = await pool.query(
+                    `
+          SELECT u.email AS manager_email
+          FROM employees e
+          JOIN employees m ON e.manager_id = m.id
+          JOIN users u ON u.employee_id = m.id
+          WHERE e.id = $1
+            AND u.email IS NOT NULL
+          LIMIT 1
+          `,
+                    [employeeId]
+                );
+                if (managerRes.rows.length) {
+                    managerEmail = managerRes.rows[0].manager_email;
+                }
+            } catch (managerErr) {
+                console.error("Could not resolve manager email for WFH request:", managerErr.message);
+            }
+
+            await sendNewWfhRequestEmail({
+                adminEmail,
+                managerEmail,
+                organizationName,
+                employeeName,
+                wfh: {
+                    startDate,
+                    endDate,
+                    reason,
+                },
+            });
+        } catch (emailError) {
+            console.error("Failed to send new WFH request email:", emailError.message);
+        }
+
         return res.status(201).json({
             statusCode: 201,
             message: "WFH request submitted successfully",
@@ -88,7 +226,7 @@ const createWFHRequest = async (req, res) => {
             error: error.message,
         });
     }
-};
+}
 
 /**
  * Get WFH requests for the logged-in employee
@@ -223,6 +361,80 @@ const getPendingWFHRequests = async (req, res) => {
  * @route PUT /api/wfh/update/:wfhId
  * @access Private (Admin)
  */
+// const updateWFHRequestStatus = async (req, res) => {
+//     const { wfhId } = req.params;
+//     const { status } = req.body;
+//     const updatedBy = req.user.employee_id;
+//     const role = String(req.user.role || "").toLowerCase();
+//     const isAdmin = role.includes("admin");
+
+//     try {
+//         if (!status || !["approved", "rejected"].includes(status)) {
+//             return res.status(400).json({
+//                 statusCode: 400,
+//                 message: 'Status must be either "approved" or "rejected"',
+//             });
+//         }
+
+//         if (!isAdmin) {
+//             const wfhCheck = await pool.query(
+//                 `
+//         SELECT e.manager_id
+//         FROM wfh_requests wr
+//         JOIN employees e ON wr.employee_id = e.id
+//         WHERE wr.id = $1
+//         `,
+//                 [wfhId]
+//             );
+
+//             if (wfhCheck.rowCount === 0) {
+//                 return res.status(404).json({
+//                     statusCode: 404,
+//                     message: "WFH request not found",
+//                 });
+//             }
+
+//             const managerId = wfhCheck.rows[0].manager_id;
+//             if (String(managerId) !== String(updatedBy)) {
+//                 return res.status(403).json({
+//                     statusCode: 403,
+//                     message: "You are not authorized to approve/reject this WFH request",
+//                 });
+//             }
+//         }
+
+
+//         const result = await pool.query(
+//             `
+//       UPDATE wfh_requests
+//       SET status = $1, updated_at = NOW()
+//       WHERE id = $2
+//       RETURNING *
+//       `,
+//             [status, parseInt(wfhId)]
+//         );
+
+//         if (result.rows.length === 0) {
+//             return res.status(404).json({
+//                 statusCode: 404,
+//                 message: "WFH request not found or not updated",
+//             });
+//         }
+
+//         return res.status(200).json({
+//             statusCode: 200,
+//             message: `WFH request ${status}`,
+//             data: result.rows[0],
+//         });
+//     } catch (error) {
+//         console.error("Error updating WFH request:", error.message);
+//         return res.status(500).json({
+//             statusCode: 500,
+//             message: "Failed to update WFH request",
+//             error: error.message,
+//         });
+//     }
+// };
 const updateWFHRequestStatus = async (req, res) => {
     const { wfhId } = req.params;
     const { status } = req.body;
@@ -283,6 +495,39 @@ const updateWFHRequestStatus = async (req, res) => {
             });
         }
 
+        // Send email notification to the employee (non-blocking)
+        try {
+            const wfhData = result.rows[0];
+            const employeeId = wfhData.employee_id;
+
+            const employeeResult = await pool.query(
+                "SELECT name, email FROM employees WHERE id = $1",
+                [employeeId]
+            );
+
+            if (employeeResult.rows.length > 0) {
+                const employee = employeeResult.rows[0];
+                const organizationName = process.env.ORG_NAME || "Attendix";
+
+                await sendWfhStatusEmail({
+                    employeeEmail: employee.email,
+                    employeeName: employee.name,
+                    organizationName,
+                    wfh: {
+                        startDate: wfhData.start_date,
+                        endDate: wfhData.end_date,
+                        reason: wfhData.reason,
+                    },
+                    status,
+                });
+
+                console.log(`WFH ${status} email sent to ${employee.email}`);
+            }
+        } catch (emailError) {
+            console.error("Failed to send WFH status email:", emailError.message);
+            // Don't fail the API response if email fails
+        }
+
         return res.status(200).json({
             statusCode: 200,
             message: `WFH request ${status}`,
@@ -297,7 +542,6 @@ const updateWFHRequestStatus = async (req, res) => {
         });
     }
 };
-
 module.exports = {
     createWFHRequest,
     getMyWFHRequests,

@@ -1,5 +1,6 @@
 // wfhCtrl.js
 const pool = require("../configure/dbConfig");
+const { sendNewWfhRequestEmail, sendWfhStatusEmail } = require("../services/emailService");
 
 const getRequestedDays = (startDate, endDate, isHalfDay) => {
     if (isHalfDay) return 0.5;

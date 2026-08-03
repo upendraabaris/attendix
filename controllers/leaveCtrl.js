@@ -282,6 +282,47 @@ const createLeaveRequest = async (req, res) => {
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  */
+
+// const getMyLeaveRequests = async (req, res) => {
+//   const employeeId = req.user.employee_id;
+
+//   try {
+//     const result = await pool.query(
+//       'SELECT * FROM get_employee_leave_requests($1)',
+//       [employeeId]
+//     );
+//     const rowsWithAttachments = await attachLeaveAttachments(req, result.rows);
+//     // Format start_date and end_date in each row
+//     const formattedRows = rowsWithAttachments.map((row) => ({
+//       ...row,
+//       start_date: new Date(row.start_date).toLocaleDateString('en-US', {
+//         year: 'numeric',
+//         month: 'long',
+//         day: 'numeric',
+//       }),
+//       end_date: new Date(row.end_date).toLocaleDateString('en-US', {
+//         year: 'numeric',
+//         month: 'long',
+//         day: 'numeric',
+//       }),
+//     }));
+
+
+//     res.status(200).json({
+//       statusCode: 200,
+//       message: 'Leave requests retrieved successfully',
+//       data: formattedRows
+//     });
+//   } catch (error) {
+//     console.error('Error retrieving leave requests:', error);
+//     res.status(500).json({
+//       statusCode: 500,
+//       message: 'Failed to retrieve leave requests',
+//       error: error.message
+//     });
+//   }
+// };
+
 const getMyLeaveRequests = async (req, res) => {
   const employeeId = req.user.employee_id;
 
@@ -291,7 +332,6 @@ const getMyLeaveRequests = async (req, res) => {
       [employeeId]
     );
     const rowsWithAttachments = await attachLeaveAttachments(req, result.rows);
-    // Format start_date and end_date in each row
     const formattedRows = rowsWithAttachments.map((row) => ({
       ...row,
       start_date: new Date(row.start_date).toLocaleDateString('en-US', {
@@ -307,10 +347,39 @@ const getMyLeaveRequests = async (req, res) => {
     }));
 
 
+    const teamResult = await pool.query(
+      `
+      SELECT 
+        lr.*,
+        e.name AS employee_name,
+        e.email AS employee_email
+      FROM leave_requests lr
+      JOIN employees e ON lr.employee_id = e.id
+      WHERE e.manager_id = $1
+      ORDER BY lr.created_at DESC
+      `,
+      [employeeId]
+    );
+    const teamRowsWithAttachments = await attachLeaveAttachments(req, teamResult.rows);
+    const formattedTeamRows = teamRowsWithAttachments.map((row) => ({
+      ...row,
+      start_date: new Date(row.start_date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }),
+      end_date: new Date(row.end_date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }),
+    }));
+
     res.status(200).json({
       statusCode: 200,
       message: 'Leave requests retrieved successfully',
-      data: formattedRows
+      data: formattedRows,
+      teamRequests: formattedTeamRows, // 👈 naya field, empty array aayega agar koi reportee nahi
     });
   } catch (error) {
     console.error('Error retrieving leave requests:', error);
@@ -547,9 +616,138 @@ const getPendingLeaveRequests = async (req, res) => {
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  */
+// const updateLeaveRequestStatus = async (req, res) => {
+//   const { leaveId } = req.params;
+//   const updated_by = req.user.employee_id;
+//   const { status } = req.body;
+
+//   try {
+//     // Validate input
+//     if (!status || !['approved', 'rejected'].includes(status)) {
+//       return res.status(400).json({
+//         statusCode: 400,
+//         message: 'Status must be either "approved" or "rejected"',
+//       });
+//     }
+
+//     if (!updated_by) {
+//       return res.status(400).json({
+//         statusCode: 400,
+//         message: 'Updated_by (user id) is required',
+//       });
+//     }
+
+//     // PostgreSQL function call
+//     const result = await pool.query(
+//       'SELECT * FROM update_leave_request_status($1, $2, $3)',
+//       [parseInt(leaveId), status, parseInt(updated_by)]
+//     );
+
+//     if (result.rows.length === 0) {
+//       return res.status(404).json({
+//         statusCode: 404,
+//         message: 'Leave request not found or not updated',
+//       });
+//     }
+
+//     // Send email notification to the employee (non-blocking)
+//     try {
+//       const leaveData = result.rows[0];
+//       const employeeId = leaveData.employee_id;
+
+//       try {
+//         await syncEarnedLeaveBalanceForEmployee(employeeId, 'earned');
+//       } catch (syncErr) {
+//         console.error("Earned leave balance sync on status update failed:", syncErr.message);
+//       }
+
+//       try {
+//         await syncEarnedLeaveBalanceForEmployee(employeeId, 'casual');
+//       } catch (syncErr) {
+//         console.error("Casual leave balance sync on status update failed:", syncErr.message);
+//       }
+
+//       // Fetch employee details for email
+//       const employeeResult = await pool.query(
+//         'SELECT name, email FROM employees WHERE id = $1',
+//         [employeeId]
+//       );
+
+//       if (employeeResult.rows.length > 0) {
+//         const employee = employeeResult.rows[0];
+//         const organizationName = process.env.ORG_NAME || 'Attendix';
+
+//         await sendLeaveStatusEmail({
+//           employeeEmail: employee.email,
+//           employeeName: employee.name,
+//           organizationName,
+//           leave: {
+//             type: leaveData.type,
+//             startDate: leaveData.start_date,
+//             endDate: leaveData.end_date,
+//             reason: leaveData.reason
+//           },
+//           status
+//         });
+
+//         console.log(`Leave ${status} email sent to ${employee.email}`);
+//       }
+//     } catch (emailError) {
+//       console.error('Failed to send leave status email:', emailError.message);
+//       // Don't fail the API response if email fails
+//     }
+
+//     return res.status(200).json({
+//       statusCode: 200,
+//       message: `Leave request ${status}`,
+//       data: result.rows[0],
+//     });
+//   } catch (error) {
+//     console.error('Error updating leave request:', error.message);
+//     return res.status(500).json({
+//       statusCode: 500,
+//       message: 'Failed to update leave request',
+//       error: error.message,
+//     });
+//   }
+// };
+
+
+// const admin = require("./firebaseAdmin");
+// const __mobileNotification = async (device_id, title, body = " ") => {
+//   try {
+//     const message = {
+//       token: device_id,
+//       notification: {
+//         title: title,
+//         body: body,
+//       },
+//     };
+
+//     const response = await admin
+//       .messaging()
+//       .send(message)
+//       .then((response) => {
+//         console.log("Notification sent:", response);
+//       })
+//       .catch((error) => {
+//         console.error("Error sending notification:", error);
+//       });
+//     return {
+//       success: true,
+//       statusCode: 200,
+//       message: "Notification sent successfully",
+//       response,
+//     };
+//   } catch (error) {
+//     console.error("Error sending notification:", error);
+//   }
+// }
 const updateLeaveRequestStatus = async (req, res) => {
   const { leaveId } = req.params;
   const updated_by = req.user.employee_id;
+  const role = String(req.user.role || "").toLowerCase();
+  const isAdmin = role.includes("admin");
   const { status } = req.body;
 
   try {
@@ -566,6 +764,34 @@ const updateLeaveRequestStatus = async (req, res) => {
         statusCode: 400,
         message: 'Updated_by (user id) is required',
       });
+    }
+
+
+    if (!isAdmin) {
+      const leaveCheck = await pool.query(
+        `
+        SELECT e.manager_id
+        FROM leave_requests lr
+        JOIN employees e ON lr.employee_id = e.id
+        WHERE lr.id = $1
+        `,
+        [leaveId]
+      );
+
+      if (leaveCheck.rowCount === 0) {
+        return res.status(404).json({
+          statusCode: 404,
+          message: 'Leave request not found',
+        });
+      }
+
+      const managerId = leaveCheck.rows[0].manager_id;
+      if (String(managerId) !== String(updated_by)) {
+        return res.status(403).json({
+          statusCode: 403,
+          message: 'You are not authorized to approve/reject this leave request',
+        });
+      }
     }
 
     // PostgreSQL function call
@@ -642,39 +868,6 @@ const updateLeaveRequestStatus = async (req, res) => {
     });
   }
 };
-
-
-// const admin = require("./firebaseAdmin");
-// const __mobileNotification = async (device_id, title, body = " ") => {
-//   try {
-//     const message = {
-//       token: device_id,
-//       notification: {
-//         title: title,
-//         body: body,
-//       },
-//     };
-
-//     const response = await admin
-//       .messaging()
-//       .send(message)
-//       .then((response) => {
-//         console.log("Notification sent:", response);
-//       })
-//       .catch((error) => {
-//         console.error("Error sending notification:", error);
-//       });
-//     return {
-//       success: true,
-//       statusCode: 200,
-//       message: "Notification sent successfully",
-//       response,
-//     };
-//   } catch (error) {
-//     console.error("Error sending notification:", error);
-//   }
-// }
-
 
 module.exports = {
   createLeaveRequest,

@@ -196,6 +196,25 @@ const getLatestActivity = async (req, res) => {
   }
 };
 
+// const getEmployeeById = async (req, res) => {
+//   const { id } = req.params;
+
+//   try {
+//     const result = await pool.query(
+//       `SELECT * FROM get_employee_by_id($1)`,
+//       [id]
+//     );
+
+//     if (result.rows.length === 0) {
+//       return res.status(404).json({ message: "Employee not found" });
+//     }
+
+//     return res.status(200).json(result.rows[0]);
+//   } catch (error) {
+//     console.error("Error fetching employee by ID:", error);
+//     res.status(500).json({ message: "Server error", error: error.message });
+//   }
+// };
 const getEmployeeById = async (req, res) => {
   const { id } = req.params;
 
@@ -209,12 +228,27 @@ const getEmployeeById = async (req, res) => {
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    return res.status(200).json(result.rows[0]);
+    const employee = result.rows[0];
+
+    // get_employee_by_id() SQL function manager_id return nahi karta,
+    // isliye alag se fetch karke response mein merge karo
+    try {
+      const managerRes = await pool.query(
+        `SELECT manager_id FROM employees WHERE id = $1`,
+        [id]
+      );
+      employee.manager_id = managerRes.rows[0]?.manager_id ?? null;
+    } catch (managerErr) {
+      console.error("Could not fetch manager_id for employee:", managerErr.message);
+    }
+
+    return res.status(200).json(employee);
   } catch (error) {
     console.error("Error fetching employee by ID:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 //Update Employee (manager_id)
 
 const updateEmployee = async (req, res) => {

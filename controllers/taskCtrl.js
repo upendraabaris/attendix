@@ -283,7 +283,7 @@ const getMyTasks = async (req, res) => {
       `SELECT t.*, w.name as workspace_name
        FROM tasks t
        LEFT JOIN workspaces w ON t.workspace_id = w.id
-       WHERE t.employee_id = $1
+       WHERE t.employee_id = $1 AND (t.workspace_id IS NULL OR w.is_active = true)
        ORDER BY t.created_at DESC`,
       [employeeId]
     );
@@ -756,7 +756,7 @@ const getFilteredWorkspaceTasks = async (req, res) => {
       SELECT t.*, e.name as employee_name
       FROM tasks t
       LEFT JOIN employees e ON t.employee_id = e.id
-      WHERE t.workspace_id = $1 AND e.organization_id = $2
+      WHERE t.workspace_id = $1 AND e.organization_id = $2 AND w.is_active = true
     `;
     const values = [workspace_id, organizationId];
     let paramIndex = 3;
@@ -941,6 +941,7 @@ const getLast7DaysTasks = async (req, res) => {
       LEFT JOIN public.organizations o ON e.organization_id = o.id
       WHERE e.organization_id = $1
       AND e.status = 'active'
+      AND (t.workspace_id IS NULL OR w.is_active = true)
     `;
     const values = [organizationId];
     let i = 2;

@@ -4,7 +4,7 @@ const createMasterTask = async (req, res) => {
   const { workspace_ids, workspace_id, title, description, start_date, end_date, assignees, priority } = req.body;
   const creatorId = req.user?.employee_id ? Number(req.user.employee_id) : null;
   let assigneesList = Array.isArray(assignees) ? assignees.map(Number) : [];
-  
+
   if (creatorId && !assigneesList.includes(creatorId)) {
     assigneesList.push(creatorId);
   }
@@ -90,6 +90,13 @@ const getMyMasterTasks = async (req, res) => {
        FROM master_tasks m
        LEFT JOIN employees e ON m.created_by = e.id
        WHERE $1 = ANY(m.assignees)
+       AND (
+           m.workspace_ids IS NULL
+           OR array_length(m.workspace_ids, 1) IS NULL
+           OR EXISTS (
+             SELECT 1 FROM workspaces w2 WHERE w2.id = ANY(m.workspace_ids) AND w2.is_active = true
+           )
+         )
        ORDER BY m.created_at DESC`,
       [employeeId]
     );

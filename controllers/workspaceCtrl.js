@@ -68,7 +68,7 @@ exports.getAllWorkspaces = async (req, res) => {
     const result = await pool.query(
       `SELECT id, name, created_at, created_by_name
        FROM workspaces
-       WHERE organization_id = $1
+       WHERE organization_id = $1 AND is_active = true
        ORDER BY id DESC`,
       [organization_id]
     );
@@ -105,7 +105,7 @@ exports.createWorkspace = async (req, res) => {
     const result = await pool.query(
       `INSERT INTO workspaces (name, organization_id, created_by_name)
        VALUES ($1, $2, $3)
-       RETURNING id, name, created_at, organization_id, created_by_name`,
+       RETURNING id, name, created_at, organization_id, created_by_name, is_active`,
       [name, organization_id, created_by_name]
     );
     res.status(201).json(result.rows[0]);
@@ -135,7 +135,7 @@ exports.getAllWorkspacesByEmployeeId = async (req, res) => {
        FROM workspaces w
        LEFT JOIN tasks t ON t.workspace_id = w.id AND t.employee_id = $1
        LEFT JOIN master_tasks mt ON mt.workspace_id = w.id AND $1 = ANY(mt.assignees)
-       WHERE w.organization_id = $2 AND (t.employee_id IS NOT NULL OR mt.id IS NOT NULL OR w.created_by_name = $3)
+       WHERE w.organization_id = $2 AND w.is_active = true AND (t.employee_id IS NOT NULL OR mt.id IS NOT NULL OR w.created_by_name = $3)
        GROUP BY w.id, w.name, w.created_at, w.created_by_name
        ORDER BY w.id DESC`,
       [employee_id, organization_id, employee_name]
@@ -145,5 +145,73 @@ exports.getAllWorkspacesByEmployeeId = async (req, res) => {
   } catch (err) {
     console.error("Error fetching workspaces:", err);
     res.status(500).json({ message: "Server error while fetching workspaces" });
+  }
+};
+// 🟢 Update workspace name
+exports.updateWorkspace = async (req, res) => {
+  const { id } = req.params;
+  const rawName = req.body?.name;
+  const name = typeof rawName === "string" ? rawName.trim() : "";
+  const organization_id = req.user?.organization_id;
+
+  if (!organization_id) {
+    return res.status(403).json({ message: "Organization context missing" });
+  }
+  if (!name) {
+    return res.status(400).json({ message: "Workspace name is required" });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE workspaces
+       SET name = $1
+       WHERE id = $2 AND organization_id = $3
+       RETURNING id, name, created_at, organization_id, created_by_name, is_active`,
+      [name, id, organization_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Workspace not found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === "23505") {
+      return res.status(409).json({ message: "Workspace name already exists in this organization" });
+    }
+    console.error("Error updating workspace:", err);
+    res.status(500).json({ message: "Server error while updating workspace" });
+  }
+};
+
+// 🟢 Soft delete / restore workspace (toggle active status)
+exports.toggleWorkspaceStatus = async (req, res) => {
+  const { id } = req.params;
+  const organization_id = req.user?.organization_id;
+
+  if (!organization_id) {
+    return res.status(403).json({ message: "Organization context missing" });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE workspaces
+       SET is_active = NOT is_active
+       WHERE id = $1 AND organization_id = $2
+       RETURNING id, name, is_active`,
+      [id, organization_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Workspace not found" });
+    }
+
+    res.json({
+      message: result.rows[0].is_active ? "Workspace activated" : "Workspace deactivated",
+      data: result.rows[0],
+    });
+  } catch (err) {
+    console.error("Error toggling workspace status:", err);
+    res.status(500).json({ message: "Server error while updating workspace status" });
   }
 };

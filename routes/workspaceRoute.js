@@ -19,12 +19,16 @@ const router = express.Router();
 const {
   getAllWorkspaces,
   createWorkspace,
-  getAllWorkspacesByEmployeeId
+  getAllWorkspacesByEmployeeId,
+  updateWorkspace,
+  toggleWorkspaceStatus
 } = require("../controllers/workspaceCtrl");
 const { authenticate } = require("../middleware/authMiddleware");
 
 router.get("/", authenticate, getAllWorkspaces);
 router.post("/", authenticate, createWorkspace);
 router.get("/emp/workspace", authenticate, getAllWorkspacesByEmployeeId);
+router.put("/:id", authenticate, updateWorkspace);
+router.patch("/:id/toggle", authenticate, toggleWorkspaceStatus);
 
 module.exports = router;

@@ -755,7 +755,8 @@ const getFilteredWorkspaceTasks = async (req, res) => {
     let query = `
       SELECT t.*, e.name as employee_name
       FROM tasks t
-      LEFT JOIN employees e ON t.employee_id = e.id
+      LEFT JOIN employees e ON t.employee_id = e.id 
+      LEFT JOIN workspaces w ON t.workspace_id = w.id
       WHERE t.workspace_id = $1 AND e.organization_id = $2 AND w.is_active = true
     `;
     const values = [workspace_id, organizationId];

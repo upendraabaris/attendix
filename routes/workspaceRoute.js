@@ -29,6 +29,6 @@ router.get("/", authenticate, getAllWorkspaces);
 router.post("/", authenticate, createWorkspace);
 router.get("/emp/workspace", authenticate, getAllWorkspacesByEmployeeId);
 router.put("/:id", authenticate, updateWorkspace);
-router.patch("/:id/toggle", authenticate, toggleWorkspaceStatus);
+router.patch("/:id/toggle-status", authenticate, toggleWorkspaceStatus);
 
 module.exports = router;

@@ -132,12 +132,13 @@ exports.getAllWorkspacesByEmployeeId = async (req, res) => {
 
     const result = await pool.query(
       `SELECT w.id, w.name, w.created_at, w.created_by_name
-       FROM workspaces w
-       LEFT JOIN tasks t ON t.workspace_id = w.id AND t.employee_id = $1
-       LEFT JOIN master_tasks mt ON mt.workspace_id = w.id AND $1 = ANY(mt.assignees)
-       WHERE w.organization_id = $2 AND w.is_active = true AND (t.employee_id IS NOT NULL OR mt.id IS NOT NULL OR w.created_by_name = $3)
-       GROUP BY w.id, w.name, w.created_at, w.created_by_name
-       ORDER BY w.id DESC`,
+   FROM workspaces w
+   LEFT JOIN tasks t ON t.workspace_id = w.id AND t.employee_id = $1
+   LEFT JOIN master_tasks mt ON w.id = ANY(mt.workspace_ids) AND $1 = ANY(mt.assignees)
+   WHERE w.organization_id = $2 AND w.is_active = true
+     AND (t.employee_id IS NOT NULL OR mt.id IS NOT NULL OR w.created_by_name = $3)
+   GROUP BY w.id, w.name, w.created_at, w.created_by_name
+   ORDER BY w.id DESC`,
       [employee_id, organization_id, employee_name]
     );
 

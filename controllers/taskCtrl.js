@@ -686,14 +686,72 @@ const quickAddTask = async (req, res) => {
   }
 };
 
+// const updateTaskLogInline = async (req, res) => {
+//   const { taskId, title, hours_worked, kpi, target_val, actual_result, remark, status, priority, attachment } = req.body;
+//   const userEmpId = req.user?.employee_id;
+//   const role = req.user?.role?.toLowerCase() || '';
+//   const isAdmin = role.includes('admin');
+
+//   if (hours_worked !== undefined && Number(hours_worked) < 0) {
+//     return res.status(400).json({ statusCode: 400, message: "Hours worked cannot be negative" });
+//   }
+
+//   try {
+//     // Server-side authorization check
+//     if (!isAdmin) {
+//       const checkResult = await pool.query("SELECT employee_id FROM tasks WHERE id = $1", [taskId]);
+//       if (checkResult.rowCount === 0) {
+//         return res.status(404).json({ statusCode: 404, message: "Task not found" });
+//       }
+//       if (String(checkResult.rows[0].employee_id) !== String(userEmpId)) {
+//         return res.status(403).json({ statusCode: 403, message: "Unauthorized to edit this task" });
+//       }
+//     }
+
+//     const result = await pool.query(
+//       `UPDATE tasks 
+//        SET title = COALESCE($1, title),
+//            hours_worked = COALESCE($2, hours_worked),
+//            kpi = COALESCE($3, kpi),
+//            target_val = COALESCE($4, target_val),
+//            actual_result = COALESCE($5, actual_result),
+//            remark = COALESCE($6, remark),
+//            status = COALESCE($7, status),
+//            priority = COALESCE($9, priority),
+//            attachment = COALESCE($10, attachment),
+//            completed = CASE WHEN COALESCE($7, status) = 'closed' THEN true ELSE completed END,
+//            updated_at = CURRENT_TIMESTAMP
+//        WHERE id = $8
+//        RETURNING *`,
+//       [title, hours_worked, kpi, target_val, actual_result, remark, status, taskId, priority, attachment]
+//     );
+
+//     if (result.rowCount === 0) {
+//       return res.status(404).json({ statusCode: 404, message: "Task not found" });
+//     }
+
+//     return res.status(200).json({
+//       statusCode: 200,
+//       message: "Task updated successfully",
+//       data: result.rows[0]
+//     });
+//   } catch (error) {
+//     console.error("Error updating inline task log:", error);
+//     return res.status(500).json({ statusCode: 500, message: "Failed to update task", error: error.message });
+//   }
+// };
 const updateTaskLogInline = async (req, res) => {
-  const { taskId, title, hours_worked, kpi, target_val, actual_result, remark, status, priority, attachment } = req.body;
+  const { taskId, title, hours_worked, kpi, target_val, actual_result, remark, status, priority, attachment, employee_id } = req.body;
   const userEmpId = req.user?.employee_id;
   const role = req.user?.role?.toLowerCase() || '';
   const isAdmin = role.includes('admin');
 
   if (hours_worked !== undefined && Number(hours_worked) < 0) {
     return res.status(400).json({ statusCode: 400, message: "Hours worked cannot be negative" });
+  }
+
+  if (employee_id !== undefined && !isAdmin) {
+    return res.status(403).json({ statusCode: 403, message: "Only admins can reassign tasks" });
   }
 
   try {
@@ -711,7 +769,6 @@ const updateTaskLogInline = async (req, res) => {
     const result = await pool.query(
       `UPDATE tasks 
        SET title = COALESCE($1, title),
-           hours_worked = COALESCE($2, hours_worked),
            kpi = COALESCE($3, kpi),
            target_val = COALESCE($4, target_val),
            actual_result = COALESCE($5, actual_result),
@@ -719,28 +776,45 @@ const updateTaskLogInline = async (req, res) => {
            status = COALESCE($7, status),
            priority = COALESCE($9, priority),
            attachment = COALESCE($10, attachment),
+           employee_id = COALESCE($11, employee_id),
            completed = CASE WHEN COALESCE($7, status) = 'closed' THEN true ELSE completed END,
+           ended_at = CASE 
+             WHEN COALESCE($7, status) = 'closed' AND ended_at IS NULL 
+             THEN CURRENT_TIMESTAMP 
+             ELSE ended_at 
+           END,
+           hours_worked = CASE
+             WHEN $2::numeric IS NOT NULL THEN $2::numeric
+             WHEN COALESCE($7, status) = 'closed' AND ended_at IS NULL AND started_at IS NOT NULL
+             THEN ROUND(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - started_at)) / 3600.0, 2)
+             ELSE hours_worked
+           END,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $8
        RETURNING *`,
-      [title, hours_worked, kpi, target_val, actual_result, remark, status, taskId, priority, attachment]
+      [title, hours_worked, kpi, target_val, actual_result, remark, status, taskId, priority, attachment, employee_id || null]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ statusCode: 404, message: "Task not found" });
     }
 
+    let responseData = result.rows[0];
+    if (employee_id) {
+      const empRes = await pool.query("SELECT name FROM employees WHERE id = $1", [employee_id]);
+      responseData.employee_name = empRes.rows[0]?.name || responseData.employee_name;
+    }
+
     return res.status(200).json({
       statusCode: 200,
       message: "Task updated successfully",
-      data: result.rows[0]
+      data: responseData
     });
   } catch (error) {
     console.error("Error updating inline task log:", error);
     return res.status(500).json({ statusCode: 500, message: "Failed to update task", error: error.message });
   }
 };
-
 
 
 const getFilteredWorkspaceTasks = async (req, res) => {
@@ -929,9 +1003,87 @@ const endTask = async (req, res) => {
   }
 };
 
+// const getLast7DaysTasks = async (req, res) => {
+//   const { employee_id, from_date, to_date, status } = req.query;
+//   const organizationId = req.user?.organization_id;
+
+//   try {
+//     let query = `
+//       SELECT t.*, w.name AS workspace_name, o.name AS organization_name
+//       FROM public.tasks t
+//       LEFT JOIN public.workspaces w ON w.id = t.workspace_id
+//       LEFT JOIN public.employees e ON t.employee_id = e.id
+//       LEFT JOIN public.organizations o ON e.organization_id = o.id
+//       WHERE e.organization_id = $1
+//       AND e.status = 'active'
+//       AND (t.workspace_id IS NULL OR w.is_active = true)
+//     `;
+//     const values = [organizationId];
+//     let i = 2;
+
+//     // User filter
+//     if (employee_id) {
+//       query += ` AND t.employee_id = $${i++}`;
+//       values.push(employee_id);
+//     }
+//     // Date range filter -> from_date/to_date diya to us range ke tasks, warna default last 7 days
+//     if (from_date && to_date) {
+//       query += ` AND t.due_date >= $${i++}`;
+//       values.push(from_date);
+//       query += ` AND t.due_date <= $${i++}`;
+//       values.push(to_date);
+//     } else if (from_date) {
+//       // Only "from" given -> that date onwards
+//       query += ` AND t.due_date >= $${i++}`;
+//       values.push(from_date);
+//     } else if (to_date) {
+//       // Only "to" given -> up to that date
+//       query += ` AND t.due_date <= $${i++}`;
+//       values.push(to_date);
+//     } else {
+//       query += ` AND t.due_date >= (CURRENT_DATE - INTERVAL '7 days')`;
+//       query += ` AND t.due_date <= CURRENT_DATE`;
+//     }
+
+//     // Status filter
+//     if (status && status !== "all") {
+//       query += ` AND t.status = $${i++}`;
+//       values.push(status);
+//     }
+
+//     query += ` ORDER BY t.due_date DESC`;
+
+//     const result = await pool.query(query, values);
+
+//     const formattedTasks = result.rows.map((task) => ({
+//       ...task,
+//       workspace_name: task.workspace_name || "-",
+//       organization_name: task.organization_name || "-",
+//       due_date: formatDate(task.due_date),
+//       recurrence_end_date: formatDate(task.recurrence_end_date),
+//     }));
+
+//     return res.status(200).json({
+//       statusCode: 200,
+//       message: "Tasks fetched successfully",
+//       data: formattedTasks,
+//     });
+//   } catch (error) {
+//     console.error("Error fetching tasks:", error);
+//     return res.status(500).json({
+//       statusCode: 500,
+//       message: "Failed to fetch tasks",
+//       error: error.message,
+//     });
+//   }
+// };
+
 const getLast7DaysTasks = async (req, res) => {
   const { employee_id, from_date, to_date, status } = req.query;
   const organizationId = req.user?.organization_id;
+  const requesterId = req.user?.employee_id;
+  const role = String(req.user?.role || "").toLowerCase();
+  const isAdmin = role.includes("admin");
 
   try {
     let query = `
@@ -946,6 +1098,13 @@ const getLast7DaysTasks = async (req, res) => {
     `;
     const values = [organizationId];
     let i = 2;
+
+    if (!isAdmin) {
+      query += ` AND (t.employee_id = $${i} OR e.manager_id = $${i})`;
+      values.push(requesterId);
+      i++;
+    }
+
 
     // User filter
     if (employee_id) {
@@ -1003,6 +1162,7 @@ const getLast7DaysTasks = async (req, res) => {
     });
   }
 };
+
 
 const updateTaskDuration = async (req, res) => {
   const { taskId, hours, minutes } = req.body;

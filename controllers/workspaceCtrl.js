@@ -58,6 +58,28 @@
 
 const pool = require("../configure/dbConfig");
 
+// exports.getAllWorkspaces = async (req, res) => {
+//   try {
+//     const organization_id = req.user?.organization_id;
+//     if (!organization_id) {
+//       return res.status(403).json({ message: "Organization context missing" });
+//     }
+
+//     const result = await pool.query(
+//       `SELECT id, name, created_at, created_by_name
+//        FROM workspaces
+//        WHERE organization_id = $1 AND is_active = true
+//        ORDER BY id DESC`,
+//       [organization_id]
+//     );
+
+//     res.json(result.rows);
+//   } catch (err) {
+//     console.error("Error fetching workspaces:", err);
+//     res.status(500).json({ message: "Server error while fetching workspaces" });
+//   }
+// };
+
 exports.getAllWorkspaces = async (req, res) => {
   try {
     const organization_id = req.user?.organization_id;
@@ -66,9 +88,9 @@ exports.getAllWorkspaces = async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT id, name, created_at, created_by_name
+      `SELECT id, name, created_at, created_by_name, employee_ids
        FROM workspaces
-       WHERE organization_id = $1 AND is_active = true
+       WHERE organization_id = $1  AND is_active = true
        ORDER BY id DESC`,
       [organization_id]
     );
@@ -79,6 +101,7 @@ exports.getAllWorkspaces = async (req, res) => {
     res.status(500).json({ message: "Server error while fetching workspaces" });
   }
 };
+
 
 exports.createWorkspace = async (req, res) => {
   const rawName = req.body?.name;
@@ -118,6 +141,37 @@ exports.createWorkspace = async (req, res) => {
   }
 };
 
+// exports.getAllWorkspacesByEmployeeId = async (req, res) => {
+//   try {
+//     const employee_id = req.user?.employee_id;
+//     const organization_id = req.user?.organization_id;
+
+//     if (!employee_id || !organization_id) {
+//       return res.status(403).json({ message: "User context missing" });
+//     }
+
+//     const empRes = await pool.query('SELECT name FROM employees WHERE id = $1', [employee_id]);
+//     const employee_name = empRes.rows[0]?.name || '';
+
+//     const result = await pool.query(
+//       `SELECT w.id, w.name, w.created_at, w.created_by_name
+//    FROM workspaces w
+//    LEFT JOIN tasks t ON t.workspace_id = w.id AND t.employee_id = $1
+//    LEFT JOIN master_tasks mt ON w.id = ANY(mt.workspace_ids) AND $1 = ANY(mt.assignees)
+//    WHERE w.organization_id = $2 AND w.is_active = true
+//      AND (t.employee_id IS NOT NULL OR mt.id IS NOT NULL OR w.created_by_name = $3)
+//    GROUP BY w.id, w.name, w.created_at, w.created_by_name
+//    ORDER BY w.id DESC`,
+//       [employee_id, organization_id, employee_name]
+//     );
+
+//     res.json(result.rows);
+//   } catch (err) {
+//     console.error("Error fetching workspaces:", err);
+//     res.status(500).json({ message: "Server error while fetching workspaces" });
+//   }
+// };
+
 exports.getAllWorkspacesByEmployeeId = async (req, res) => {
   try {
     const employee_id = req.user?.employee_id;
@@ -131,29 +185,67 @@ exports.getAllWorkspacesByEmployeeId = async (req, res) => {
     const employee_name = empRes.rows[0]?.name || '';
 
     const result = await pool.query(
-      `SELECT w.id, w.name, w.created_at, w.created_by_name
+  `SELECT w.id, w.name, w.created_at, w.created_by_name,  w.employee_ids
    FROM workspaces w
    LEFT JOIN tasks t ON t.workspace_id = w.id AND t.employee_id = $1
    LEFT JOIN master_tasks mt ON w.id = ANY(mt.workspace_ids) AND $1 = ANY(mt.assignees)
    WHERE w.organization_id = $2 AND w.is_active = true
      AND (t.employee_id IS NOT NULL OR mt.id IS NOT NULL OR w.created_by_name = $3)
-   GROUP BY w.id, w.name, w.created_at, w.created_by_name
+   GROUP BY w.id, w.name, w.created_at, w.created_by_name, w.employee_ids
    ORDER BY w.id DESC`,
-      [employee_id, organization_id, employee_name]
-    );
-
+  [employee_id, organization_id, employee_name] 
+);
     res.json(result.rows);
   } catch (err) {
     console.error("Error fetching workspaces:", err);
     res.status(500).json({ message: "Server error while fetching workspaces" });
   }
 };
+
+
 // 🟢 Update workspace name
+// exports.updateWorkspace = async (req, res) => {
+//   const { id } = req.params;
+//   const rawName = req.body?.name;
+//   const name = typeof rawName === "string" ? rawName.trim() : "";
+//   const organization_id = req.user?.organization_id;
+
+//   if (!organization_id) {
+//     return res.status(403).json({ message: "Organization context missing" });
+//   }
+//   if (!name) {
+//     return res.status(400).json({ message: "Workspace name is required" });
+//   }
+
+//   try {
+//     const result = await pool.query(
+//       `UPDATE workspaces
+//        SET name = $1
+//        WHERE id = $2 AND organization_id = $3
+//        RETURNING id, name, created_at, organization_id, created_by_name, is_active`,
+//       [name, id, organization_id]
+//     );
+
+//     if (result.rows.length === 0) {
+//       return res.status(404).json({ message: "Workspace not found" });
+//     }
+
+//     res.json(result.rows[0]);
+//   } catch (err) {
+//     if (err.code === "23505") {
+//       return res.status(409).json({ message: "Workspace name already exists in this organization" });
+//     }
+//     console.error("Error updating workspace:", err);
+//     res.status(500).json({ message: "Server error while updating workspace" });
+//   }
+// };
+
 exports.updateWorkspace = async (req, res) => {
   const { id } = req.params;
   const rawName = req.body?.name;
   const name = typeof rawName === "string" ? rawName.trim() : "";
   const organization_id = req.user?.organization_id;
+  const employee_ids = Array.isArray(req.body?.employee_ids) ? req.body.employee_ids : null;
 
   if (!organization_id) {
     return res.status(403).json({ message: "Organization context missing" });
@@ -165,10 +257,11 @@ exports.updateWorkspace = async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE workspaces
-       SET name = $1
+       SET name = $1,
+           employee_ids = COALESCE($4, employee_ids)
        WHERE id = $2 AND organization_id = $3
-       RETURNING id, name, created_at, organization_id, created_by_name, is_active`,
-      [name, id, organization_id]
+       RETURNING id, name, created_at, organization_id, created_by_name, is_active, employee_ids`,
+      [name, id, organization_id, employee_ids]
     );
 
     if (result.rows.length === 0) {

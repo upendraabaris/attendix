@@ -18,16 +18,49 @@ function generateRandomPassword(length = 6) {
   return password;
 }
 
+// const getAllEmployees = async (req, res) => {
+//   const orgID = req.user.organization_id;
+//   try {
+//     const result = await pool.query('SELECT * FROM get_all_employees($1)', [orgID]);
+//     res.status(200).json({ data: result.rows, message: "success", count: result.rows.length });
+//   } catch (error) {
+//     console.error('Error fetching employees:', error);
+//     res.status(500).json({ error: 'Internal Server Error' });
+//   }
+// };
+
 const getAllEmployees = async (req, res) => {
   const orgID = req.user.organization_id;
   try {
     const result = await pool.query('SELECT * FROM get_all_employees($1)', [orgID]);
-    res.status(200).json({ data: result.rows, message: "success", count: result.rows.length });
+    const employees = result.rows;
+
+    // get_all_employees() SQL function manager_id return nahi karta,
+    // isliye alag se fetch karke response mein merge karo (getEmployeeById jaisa hi pattern)
+    try {
+      const managerRes = await pool.query(
+        `SELECT id, manager_id FROM employees WHERE organization_id = $1`,
+        [orgID]
+      );
+      const managerMap = {};
+      managerRes.rows.forEach((row) => {
+        managerMap[row.id] = row.manager_id;
+      });
+
+      employees.forEach((emp) => {
+        emp.manager_id = managerMap[emp.id] ?? null;
+      });
+    } catch (managerErr) {
+      console.error("Could not merge manager_id into employee list:", managerErr.message);
+    }
+
+    res.status(200).json({ data: employees, message: "success", count: employees.length });
   } catch (error) {
     console.error('Error fetching employees:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 };
+
 
 // const addEmployee = async (req, res) => {
 //   const { name, email, phone, role, created_at } = req.body.params;

@@ -579,7 +579,7 @@ const updateOrganizationSettings = async (req, res) => {
   }
 
   const { leave_renewal_type } = req.body;
-  const VALID_RENEWAL_TYPES = ["date_of_joining", "calendar_year"];
+  const VALID_RENEWAL_TYPES = ["date_of_joining", "calendar_year","financial_year"];
 
   if (!leave_renewal_type || !VALID_RENEWAL_TYPES.includes(leave_renewal_type)) {
     return res.status(400).json({

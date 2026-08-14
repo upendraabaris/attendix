@@ -31,6 +31,16 @@ const getLeaveCycle = (joiningDate, referenceDate = new Date(), renewalType = "d
       end: `${year}-12-31`,
     };
   }
+  // Financial year mode — fixed Apr 1 to Mar 31
+  if (renewalType === "financial_year") {
+    const month = reference.getUTCMonth(); // 0 = Jan ... 3 = Apr
+    const startYear = month >= 3 ? year : year - 1; // Jan/Feb/Mar belong to previous FY
+    const endYear = startYear + 1;
+    return {
+      start: `${startYear}-04-01`,
+      end: `${endYear}-03-31`,
+    };
+  }
 
   // Date of joining mode — DOJ anniversary cycle
   if (!joiningDate) {

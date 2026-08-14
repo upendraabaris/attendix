@@ -24,14 +24,46 @@ const createMasterTask = async (req, res) => {
   }
 };
 
+// const getMasterTasks = async (req, res) => {
+//   const { workspace_id } = req.params;
+//   try {
+//     const result = await pool.query(
+//       `SELECT m.*, e.name as created_by_name 
+//        FROM master_tasks m
+//        LEFT JOIN employees e ON m.created_by = e.id
+//        WHERE $1 = ANY(m.workspace_ids) 
+//        ORDER BY m.created_at DESC`,
+//       [workspace_id]
+//     );
+//     res.status(200).json({ statusCode: 200, data: result.rows });
+//   } catch (error) {
+//     res.status(500).json({ statusCode: 500, message: "Failed to fetch master tasks", error: error.message });
+//   }
+// };
+
+const MASTER_TASK_STATUS_SQL = `
+  CASE
+    WHEN NOT EXISTS (SELECT 1 FROM tasks t WHERE t.master_task_id = m.id) THEN 'open'
+    WHEN NOT EXISTS (
+      SELECT 1 FROM tasks t WHERE t.master_task_id = m.id AND t.status IS DISTINCT FROM 'closed'
+    ) THEN 'closed'
+    WHEN EXISTS (
+      SELECT 1 FROM tasks t WHERE t.master_task_id = m.id AND t.status = 'in progress'
+    ) THEN 'in progress'
+    ELSE 'open'
+  END
+`;
+
 const getMasterTasks = async (req, res) => {
   const { workspace_id } = req.params;
   try {
     const result = await pool.query(
-      `SELECT m.*, e.name as created_by_name 
+      `SELECT m.*, e.name as created_by_name,
+         (${MASTER_TASK_STATUS_SQL}) as computed_status
        FROM master_tasks m
        LEFT JOIN employees e ON m.created_by = e.id
-       WHERE $1 = ANY(m.workspace_ids) 
+       WHERE $1 = ANY(m.workspace_ids)
+         AND COALESCE(m.is_active, true) = true
        ORDER BY m.created_at DESC`,
       [workspace_id]
     );
@@ -76,6 +108,36 @@ const updateMasterTask = async (req, res) => {
   }
 };
 
+// const getMyMasterTasks = async (req, res) => {
+//   const employeeId = req.user?.employee_id;
+
+//   if (!employeeId) {
+//     return res.status(403).json({ message: "Employee ID missing in token" });
+//   }
+
+//   try {
+//     const result = await pool.query(
+//       `SELECT m.*, e.name as created_by_name,
+//        (SELECT string_agg(w.name, ', ') FROM workspaces w WHERE w.id = ANY(m.workspace_ids)) as workspace_name
+//        FROM master_tasks m
+//        LEFT JOIN employees e ON m.created_by = e.id
+//        WHERE $1 = ANY(m.assignees)
+//        AND (
+//            m.workspace_ids IS NULL
+//            OR array_length(m.workspace_ids, 1) IS NULL
+//            OR EXISTS (
+//              SELECT 1 FROM workspaces w2 WHERE w2.id = ANY(m.workspace_ids) AND w2.is_active = true
+//            )
+//          )
+//        ORDER BY m.created_at DESC`,
+//       [employeeId]
+//     );
+//     res.status(200).json({ statusCode: 200, data: result.rows });
+//   } catch (error) {
+//     res.status(500).json({ statusCode: 500, message: "Failed to fetch your master tasks", error: error.message });
+//   }
+// };
+
 const getMyMasterTasks = async (req, res) => {
   const employeeId = req.user?.employee_id;
 
@@ -86,10 +148,12 @@ const getMyMasterTasks = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT m.*, e.name as created_by_name,
-       (SELECT string_agg(w.name, ', ') FROM workspaces w WHERE w.id = ANY(m.workspace_ids)) as workspace_name
+       (SELECT string_agg(w.name, ', ') FROM workspaces w WHERE w.id = ANY(m.workspace_ids)) as workspace_name,
+       (${MASTER_TASK_STATUS_SQL}) as computed_status
        FROM master_tasks m
        LEFT JOIN employees e ON m.created_by = e.id
        WHERE $1 = ANY(m.assignees)
+       AND COALESCE(m.is_active, true) = true
        AND (
            m.workspace_ids IS NULL
            OR array_length(m.workspace_ids, 1) IS NULL
@@ -106,4 +170,29 @@ const getMyMasterTasks = async (req, res) => {
   }
 };
 
-module.exports = { createMasterTask, getMasterTasks, updateMasterTask, getMyMasterTasks };
+const toggleMasterTaskStatus = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `UPDATE master_tasks
+       SET is_active = NOT COALESCE(is_active, true)
+       WHERE id = $1
+       RETURNING id, title, is_active`,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ statusCode: 404, message: "Master task not found" });
+    }
+
+    res.status(200).json({
+      statusCode: 200,
+      message: result.rows[0].is_active ? "Master task activated" : "Master task deleted",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    res.status(500).json({ statusCode: 500, message: "Failed to update master task status", error: error.message });
+  }
+};
+
+module.exports = { createMasterTask, getMasterTasks, updateMasterTask, getMyMasterTasks, toggleMasterTaskStatus };

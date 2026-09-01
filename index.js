@@ -83,6 +83,7 @@ const supportRoute = require("./routes/supportRoute");
 const chatRoute = require("./routes/chatRoute");
 const aiRoute = require("./routes/aiRoute");
 const wfhRoutes = require("./routes/wfhRoutes");
+const deviceTokenRoutes = require("./routes/deviceTokenRoutes");
 
 app.use("/api/attendance", attendanceRoute);
 app.use("/api/leave", leaveRoute);
@@ -104,6 +105,7 @@ app.use("/api/support", supportRoute);
 app.use("/api/chat", chatRoute);
 app.use("/api/ai", aiRoute);
 app.use("/api/wfh", wfhRoutes);
+app.use("/api/device-token", deviceTokenRoutes);
 
 app.get("/", (_req, res) => res.send("Hello world"));
 

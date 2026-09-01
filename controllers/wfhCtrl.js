@@ -1,6 +1,7 @@
 // wfhCtrl.js
 const pool = require("../configure/dbConfig");
 const { sendNewWfhRequestEmail, sendWfhStatusEmail } = require("../services/emailService");
+const { sendPushNotificationToEmployees } = require("../services/pushNotificationService");
 
 const getRequestedDays = (startDate, endDate, isHalfDay) => {
     if (isHalfDay) return 0.5;
@@ -212,6 +213,59 @@ const createWFHRequest = async (req, res) => {
             });
         } catch (emailError) {
             console.error("Failed to send new WFH request email:", emailError.message);
+        }
+
+        // Attempt to push-notify the admin(s) and manager about the new WFH request
+        // (non-blocking of API success; independent of the email attempt above)
+        try {
+            const pushAdminResult = await pool.query(
+                `
+        SELECT e.id AS admin_employee_id
+        FROM organizations o
+        JOIN employees e ON e.organization_id = o.id
+        WHERE o.id = $1
+          AND e.role = 'admin'
+          AND e.status = 'active'
+        `,
+                [organizationId]
+            );
+            const adminEmployeeIds = pushAdminResult.rows.map((row) => row.admin_employee_id);
+
+            let managerEmployeeId = null;
+            try {
+                const pushManagerResult = await pool.query(
+                    `
+          SELECT m.id AS manager_employee_id
+          FROM employees e
+          JOIN employees m ON e.manager_id = m.id
+          WHERE e.id = $1
+          `,
+                    [employeeId]
+                );
+                if (pushManagerResult.rows.length) {
+                    managerEmployeeId = pushManagerResult.rows[0].manager_employee_id;
+                }
+            } catch (managerErr) {
+                console.error("Could not resolve manager for WFH push notification:", managerErr.message);
+            }
+
+            const pushEmployeeIds = [...adminEmployeeIds];
+            if (managerEmployeeId && !pushEmployeeIds.includes(managerEmployeeId)) {
+                pushEmployeeIds.push(managerEmployeeId);
+            }
+
+            if (pushEmployeeIds.length) {
+                await sendPushNotificationToEmployees(pushEmployeeIds, {
+                    title: "New WFH Request",
+                    body: `${employeeName} has requested Work From Home.`,
+                    data: {
+                        type: "wfh_request_created",
+                        wfhId: String(result.rows[0]?.id || ""),
+                    },
+                });
+            }
+        } catch (pushError) {
+            console.error("Failed to send WFH request push notification:", pushError.message);
         }
 
         return res.status(201).json({
@@ -527,6 +581,23 @@ const updateWFHRequestStatus = async (req, res) => {
         } catch (emailError) {
             console.error("Failed to send WFH status email:", emailError.message);
             // Don't fail the API response if email fails
+        }
+
+        // Attempt to push-notify the employee about their WFH status update
+        // (non-blocking of API success; independent of the email attempt above)
+        try {
+            const wfhData = result.rows[0];
+            await sendPushNotificationToEmployees(wfhData.employee_id, {
+                title: `WFH Request ${status === "approved" ? "Approved" : "Rejected"}`,
+                body: `Your Work From Home request has been ${status}.`,
+                data: {
+                    type: "wfh_status_updated",
+                    wfhId: String(wfhData.id),
+                    status,
+                },
+            });
+        } catch (pushError) {
+            console.error("Failed to send WFH status push notification:", pushError.message);
         }
 
         return res.status(200).json({

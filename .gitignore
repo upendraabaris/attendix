@@ -11,5 +11,6 @@ migrate_mt_workspaces.js
 migrate_task_priority.js
 migrate_ws.js
 add_priority_to_tasks.js
+create_device_tokens_table.js
 
 apiConfig.jsx

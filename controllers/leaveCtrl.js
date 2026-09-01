@@ -1,5 +1,6 @@
 const pool = require("../configure/dbConfig");
 const { sendNewLeaveRequestEmail, sendLeaveStatusEmail } = require("../services/emailService");
+const { sendPushNotificationToEmployees } = require("../services/pushNotificationService");
 const { validateLeaveRequestAgainstPolicy } = require("../services/leavePolicyService");
 const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
 const { getEmployeeLeaveBalances } = require("../services/leaveBalanceService");
@@ -274,6 +275,72 @@ const createLeaveRequest = async (req, res) => {
       });
     } catch (emailError) {
       console.error('Failed to send new leave request email:', emailError.message);
+    }
+
+    // Attempt to push-notify the admin(s) and manager about the new leave request
+    // (non-blocking of API success; independent of the email attempt above)
+    try {
+      if (organizationId) {
+        const pushAdminResult = await pool.query(
+          `
+          SELECT e.id AS admin_employee_id
+          FROM organizations o
+          JOIN employees e ON e.organization_id = o.id
+          WHERE o.id = $1
+            AND e.role = 'admin'
+            AND e.status = 'active'
+          `,
+          [organizationId]
+        );
+        const adminEmployeeIds = pushAdminResult.rows.map((row) => row.admin_employee_id);
+
+        let managerEmployeeId = null;
+        try {
+          const pushManagerResult = await pool.query(
+            `
+            SELECT m.id AS manager_employee_id
+            FROM employees e
+            JOIN employees m ON e.manager_id = m.id
+            WHERE e.id = $1
+              AND m.status = 'active'
+            `,
+            [employeeId]
+          );
+          if (pushManagerResult.rows.length > 0) {
+            managerEmployeeId = pushManagerResult.rows[0].manager_employee_id;
+          }
+        } catch (managerErr) {
+          console.error('Failed to resolve manager for leave push notification:', managerErr.message);
+        }
+
+        const pushEmployeeIds = [...adminEmployeeIds];
+        if (managerEmployeeId && !pushEmployeeIds.includes(managerEmployeeId)) {
+          pushEmployeeIds.push(managerEmployeeId);
+        }
+
+        if (pushEmployeeIds.length) {
+          let pushEmployeeName = `Employee #${employeeId}`;
+          try {
+            const empNameResult = await pool.query('SELECT name FROM employees WHERE id = $1', [employeeId]);
+            if (empNameResult.rows[0]?.name) {
+              pushEmployeeName = empNameResult.rows[0].name;
+            }
+          } catch (nameErr) {
+            // keep default pushEmployeeName
+          }
+
+          await sendPushNotificationToEmployees(pushEmployeeIds, {
+            title: 'New Leave Request',
+            body: `${pushEmployeeName} has applied for ${type} leave.`,
+            data: {
+              type: 'leave_request_created',
+              leaveId: String(leaveId || ''),
+            },
+          });
+        }
+      }
+    } catch (pushError) {
+      console.error('Failed to send leave request push notification:', pushError.message);
     }
 
     res.status(201).json({
@@ -877,6 +944,23 @@ const updateLeaveRequestStatus = async (req, res) => {
     } catch (emailError) {
       console.error('Failed to send leave status email:', emailError.message);
       // Don't fail the API response if email fails
+    }
+
+    // Attempt to push-notify the employee about their leave status update
+    // (non-blocking of API success; independent of the email attempt above)
+    try {
+      const leaveData = result.rows[0];
+      await sendPushNotificationToEmployees(leaveData.employee_id, {
+        title: `Leave Request ${status === 'approved' ? 'Approved' : 'Rejected'}`,
+        body: `Your ${leaveData.type} leave request has been ${status}.`,
+        data: {
+          type: 'leave_status_updated',
+          leaveId: String(leaveData.id || leaveId),
+          status,
+        },
+      });
+    } catch (pushError) {
+      console.error('Failed to send leave status push notification:', pushError.message);
     }
 
     return res.status(200).json({

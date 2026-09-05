@@ -517,6 +517,57 @@ const getMyLeaveBalances = async (req, res) => {
   }
 };
 
+/**
+ * GET /leave/team-balances
+ * Returns leave balances for the logged-in employee's direct reports
+ * (Reporting Manager view). Team scope is resolved server-side from
+ * employees.manager_id using the caller's own employee_id from the JWT —
+ * never trusts a client-supplied employeeId. Callers with no direct
+ * reports simply get an empty array back.
+ */
+const getTeamLeaveBalancesCtrl = async (req, res) => {
+  const requesterId = req.user.employee_id;
+  const organizationId = req.user.organization_id;
+
+  if (!organizationId) {
+    return res.status(400).json({
+      statusCode: 400,
+      message: "Organization ID missing in token",
+    });
+  }
+
+  try {
+    const teamResult = await pool.query(
+      `SELECT id FROM employees WHERE manager_id = $1 AND organization_id = $2`,
+      [requesterId, organizationId]
+    );
+    const teamIds = teamResult.rows.map((row) => row.id);
+
+    if (teamIds.length === 0) {
+      return res.status(200).json({
+        statusCode: 200,
+        message: "Team leave balances retrieved successfully",
+        data: [],
+      });
+    }
+
+    const report = await getOrganizationLeaveBalanceReport(organizationId, teamIds);
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Team leave balances retrieved successfully",
+      data: report,
+    });
+  } catch (error) {
+    console.error("Error retrieving team leave balances:", error);
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to retrieve team leave balances",
+      error: error.message,
+    });
+  }
+};
+
 const getOrganizationLeaveBalanceReportCtrl = async (req, res) => {
   const organizationId = req.user.organization_id;
   const role = String(req.user.role || "").toLowerCase();
@@ -982,6 +1033,7 @@ module.exports = {
   createLeaveRequest,
   getMyLeaveRequests,
   getMyLeaveBalances,
+  getTeamLeaveBalancesCtrl,
   getOrganizationLeaveBalanceReportCtrl,
   getEmployeeLeaveRequests,
   getAllLeaveRequests,

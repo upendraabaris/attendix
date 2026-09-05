@@ -1019,7 +1019,15 @@ const getEmployeeLeaveBalanceHistory = async (organizationId, leaveType = null) 
   return result.rows;
 };
 
-const getOrganizationLeaveBalanceReport = async (organizationId) => {
+/**
+ * @param {number} organizationId
+ * @param {number[]|null} employeeIds - when provided, restricts the report to just
+ *   these employee ids (e.g. a reporting manager's direct reports). Null/omitted
+ *   preserves the original org-wide behavior used by the admin report.
+ */
+const getOrganizationLeaveBalanceReport = async (organizationId, employeeIds = null) => {
+  const hasEmployeeFilter = Array.isArray(employeeIds) && employeeIds.length > 0;
+
   const employeeResult = await pool.query(
     `
       SELECT
@@ -1031,11 +1039,12 @@ const getOrganizationLeaveBalanceReport = async (organizationId) => {
       FROM employees e
       WHERE e.organization_id = $1
         AND COALESCE(e.status, 'active') = 'active'
+        ${hasEmployeeFilter ? 'AND e.id = ANY($2::int[])' : ''}
       ORDER BY
         CASE WHEN LOWER(e.role) = 'admin' THEN 0 ELSE 1 END,
         e.name ASC
     `,
-    [organizationId]
+    hasEmployeeFilter ? [organizationId, employeeIds] : [organizationId]
   );
 
   // Non-rule-based leave types that support carry-forward tracking

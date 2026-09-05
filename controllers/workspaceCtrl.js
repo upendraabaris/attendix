@@ -203,6 +203,55 @@ exports.getAllWorkspacesByEmployeeId = async (req, res) => {
 };
 
 
+/**
+ * Get workspaces the logged-in employee's direct reports belong to
+ * (Reporting Manager view). Team scope is resolved server-side from
+ * employees.manager_id using the caller's own employee_id from the JWT —
+ * never trusts a client-supplied employeeId. Callers with no direct
+ * reports simply get an empty array back.
+ */
+exports.getTeamWorkspaces = async (req, res) => {
+  const requesterId = req.user?.employee_id;
+  const organization_id = req.user?.organization_id;
+
+  if (!requesterId || !organization_id) {
+    return res.status(403).json({ message: "User context missing" });
+  }
+
+  try {
+    const teamResult = await pool.query(
+      `SELECT id FROM employees WHERE manager_id = $1 AND organization_id = $2`,
+      [requesterId, organization_id]
+    );
+    const teamIds = teamResult.rows.map((row) => row.id);
+
+    if (teamIds.length === 0) {
+      return res.json([]);
+    }
+
+    const result = await pool.query(
+      `SELECT DISTINCT w.id, w.name, w.created_at, w.created_by_name, w.employee_ids
+       FROM workspaces w
+       WHERE w.organization_id = $1
+         AND w.is_active = true
+         AND (
+           w.employee_ids && $2::int[]
+           OR EXISTS (
+             SELECT 1 FROM tasks t
+             WHERE t.workspace_id = w.id AND t.employee_id = ANY($2::int[])
+           )
+         )
+       ORDER BY w.id DESC`,
+      [organization_id, teamIds]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error fetching team workspaces:", err);
+    res.status(500).json({ message: "Server error while fetching team workspaces" });
+  }
+};
+
 // 🟢 Update workspace name
 // exports.updateWorkspace = async (req, res) => {
 //   const { id } = req.params;

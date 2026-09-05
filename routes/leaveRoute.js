@@ -3,6 +3,7 @@ const {
   createLeaveRequest,
   getMyLeaveRequests,
   getMyLeaveBalances,
+  getTeamLeaveBalancesCtrl,
   getOrganizationLeaveBalanceReportCtrl,
   getEmployeeLeaveRequests,
   getAllLeaveRequests,
@@ -29,6 +30,13 @@ router.post('/', authenticate, leaveUpload.single("medicalProof"), createLeaveRe
 router.get('/my', authenticate, getMyLeaveRequests);
 
 router.get('/my-balances', authenticate, getMyLeaveBalances);
+
+/**
+ * @route GET /api/leave/team-balances
+ * @desc Get leave balances for the logged-in employee's direct reports (Reporting Manager view)
+ * @access Private (any authenticated employee; returns empty data if caller has no direct reports)
+ */
+router.get('/team-balances', authenticate, getTeamLeaveBalancesCtrl);
 
 router.get('/balance-report', authenticate, authorizeRoles('admin'), getOrganizationLeaveBalanceReportCtrl);
 

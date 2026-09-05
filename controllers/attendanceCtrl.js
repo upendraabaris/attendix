@@ -318,33 +318,59 @@ const getAllAttendance = async (req, res) => {
  * Team scope is resolved server-side from employees.manager_id using the caller's
  * own employee_id from the JWT — never trusts a client-supplied employeeId.
  * Employees with no direct reports simply get an empty array back.
+ *
+ * Optional query param `employeeId` narrows the result to one specific direct
+ * report — but it is validated against the manager's own team (manager_id +
+ * organization_id) before use; a client-supplied id that is not one of the
+ * caller's direct reports is rejected with 403, never silently trusted.
  */
 const getTeamAttendance = async (req, res) => {
   const requesterId = req.user.employee_id;
   const organizationId = req.user.organization_id;
-  const { startDate, endDate } = req.query;
+  const { startDate, endDate, employeeId } = req.query;
 
   const start = startDate || new Date(new Date().setDate(1)).toISOString().split('T')[0];
   const end = endDate || new Date().toISOString().split('T')[0];
 
   try {
     const teamResult = await pool.query(
-      `SELECT id FROM employees WHERE manager_id = $1 AND organization_id = $2`,
+      `SELECT id, name FROM employees WHERE manager_id = $1 AND organization_id = $2 ORDER BY name ASC`,
       [requesterId, organizationId]
     );
     const teamIds = teamResult.rows.map((row) => row.id);
+    const directReports = teamResult.rows.map((row) => ({ id: row.id, name: row.name }));
+    const isManager = teamIds.length > 0;
 
     if (teamIds.length === 0) {
       return res.status(200).json({
         statusCode: 200,
         message: 'Attendance records retrieved successfully',
+        isManager,
+        directReports: [],
         data: []
       });
     }
 
+    // Optional single-employee filter — must be one of the caller's own
+    // direct reports (already resolved above via manager_id + organization_id).
+    // Any other value (including an unrelated employee's id) is rejected.
+    let scopedEmployeeId = 0; // 0 = every direct report, per get_combined_attendance's own convention
+    const requestedEmployeeId = String(employeeId ?? '').trim();
+    if (requestedEmployeeId !== '' && requestedEmployeeId.toLowerCase() !== 'all') {
+      const parsedEmployeeId = parseInt(requestedEmployeeId, 10);
+      if (!Number.isInteger(parsedEmployeeId) || !teamIds.includes(parsedEmployeeId)) {
+        return res.status(403).json({
+          statusCode: 403,
+          message: 'You are not authorized to view attendance for this employee'
+        });
+      }
+      scopedEmployeeId = parsedEmployeeId;
+    }
+    const scopedIds = scopedEmployeeId ? [scopedEmployeeId] : teamIds;
+
     const result = await pool.query(
       'SELECT * FROM get_combined_attendance($1, $2, $3, $4)',
-      [0, start, end, organizationId]
+      [scopedEmployeeId, start, end, organizationId]
     );
 
     let remarkMap = {};
@@ -359,7 +385,7 @@ const getTeamAttendance = async (req, res) => {
            AND a.admin_remark IS NOT NULL
            AND a.employee_id = ANY($1::int[])
            AND DATE(a.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3`,
-        [teamIds, start, end]
+        [scopedIds, start, end]
       );
       remarkResult.rows.forEach(r => {
         remarkMap[`${r.work_date}-${r.employee_id}`] = r.admin_remark;
@@ -369,7 +395,7 @@ const getTeamAttendance = async (req, res) => {
     }
 
     const updatedRows = result.rows
-      .filter((row) => teamIds.includes(row.employee_id))
+      .filter((row) => scopedIds.includes(row.employee_id))
       .map((row) => {
         const inTime = row.clock_in ? new Date(new Date(row.clock_in).getTime() + 330 * 60 * 1000) : null;
         const outTime = row.clock_out ? new Date(new Date(row.clock_out).getTime() + 330 * 60 * 1000) : null;
@@ -413,6 +439,8 @@ const getTeamAttendance = async (req, res) => {
     res.status(200).json({
       statusCode: 200,
       message: 'Attendance records retrieved successfully',
+      isManager,
+      directReports,
       data: updatedRows
     });
   } catch (error) {

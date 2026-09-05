@@ -172,6 +172,17 @@ exports.createWorkspace = async (req, res) => {
 //   }
 // };
 
+/**
+ * Get workspaces visible to the logged-in employee: their own (via task/
+ * master-task assignment or workspace creation, as before), PLUS — when the
+ * caller has direct reports (employees.manager_id = caller's employee_id) —
+ * every workspace any of those direct reports belongs to. Team scope is
+ * resolved server-side from the JWT's employee_id/organization_id, never
+ * from a client-supplied id. Callers with no direct reports get exactly the
+ * same result as before this addition (the team OR-branch is a no-op when
+ * $4 is NULL). Admin visibility is unaffected — admin uses the separate
+ * getAllWorkspaces (org-wide) endpoint, not this one.
+ */
 exports.getAllWorkspacesByEmployeeId = async (req, res) => {
   try {
     const employee_id = req.user?.employee_id;
@@ -184,71 +195,42 @@ exports.getAllWorkspacesByEmployeeId = async (req, res) => {
     const empRes = await pool.query('SELECT name FROM employees WHERE id = $1', [employee_id]);
     const employee_name = empRes.rows[0]?.name || '';
 
+    const teamResult = await pool.query(
+      `SELECT id FROM employees WHERE manager_id = $1 AND organization_id = $2`,
+      [employee_id, organization_id]
+    );
+    const teamIds = teamResult.rows.map((row) => row.id);
+    const teamIdsParam = teamIds.length > 0 ? teamIds : null;
+
     const result = await pool.query(
-  `SELECT w.id, w.name, w.created_at, w.created_by_name,  w.employee_ids
+  `SELECT DISTINCT w.id, w.name, w.created_at, w.created_by_name, w.employee_ids
    FROM workspaces w
    LEFT JOIN tasks t ON t.workspace_id = w.id AND t.employee_id = $1
    LEFT JOIN master_tasks mt ON w.id = ANY(mt.workspace_ids) AND $1 = ANY(mt.assignees)
    WHERE w.organization_id = $2 AND w.is_active = true
-     AND (t.employee_id IS NOT NULL OR mt.id IS NOT NULL OR w.created_by_name = $3)
-   GROUP BY w.id, w.name, w.created_at, w.created_by_name, w.employee_ids
+     AND (
+       t.employee_id IS NOT NULL
+       OR mt.id IS NOT NULL
+       OR w.created_by_name = $3
+       OR ($4::int[] IS NOT NULL AND (
+         w.employee_ids && $4::int[]
+         OR EXISTS (
+           SELECT 1 FROM tasks t2
+           WHERE t2.workspace_id = w.id AND t2.employee_id = ANY($4::int[])
+         )
+         OR EXISTS (
+           SELECT 1 FROM master_tasks mt2
+           WHERE w.id = ANY(mt2.workspace_ids) AND mt2.assignees && $4::int[]
+         )
+       ))
+     )
    ORDER BY w.id DESC`,
-  [employee_id, organization_id, employee_name] 
+  [employee_id, organization_id, employee_name, teamIdsParam]
 );
     res.json(result.rows);
   } catch (err) {
     console.error("Error fetching workspaces:", err);
     res.status(500).json({ message: "Server error while fetching workspaces" });
-  }
-};
-
-
-/**
- * Get workspaces the logged-in employee's direct reports belong to
- * (Reporting Manager view). Team scope is resolved server-side from
- * employees.manager_id using the caller's own employee_id from the JWT —
- * never trusts a client-supplied employeeId. Callers with no direct
- * reports simply get an empty array back.
- */
-exports.getTeamWorkspaces = async (req, res) => {
-  const requesterId = req.user?.employee_id;
-  const organization_id = req.user?.organization_id;
-
-  if (!requesterId || !organization_id) {
-    return res.status(403).json({ message: "User context missing" });
-  }
-
-  try {
-    const teamResult = await pool.query(
-      `SELECT id FROM employees WHERE manager_id = $1 AND organization_id = $2`,
-      [requesterId, organization_id]
-    );
-    const teamIds = teamResult.rows.map((row) => row.id);
-
-    if (teamIds.length === 0) {
-      return res.json([]);
-    }
-
-    const result = await pool.query(
-      `SELECT DISTINCT w.id, w.name, w.created_at, w.created_by_name, w.employee_ids
-       FROM workspaces w
-       WHERE w.organization_id = $1
-         AND w.is_active = true
-         AND (
-           w.employee_ids && $2::int[]
-           OR EXISTS (
-             SELECT 1 FROM tasks t
-             WHERE t.workspace_id = w.id AND t.employee_id = ANY($2::int[])
-           )
-         )
-       ORDER BY w.id DESC`,
-      [organization_id, teamIds]
-    );
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error("Error fetching team workspaces:", err);
-    res.status(500).json({ message: "Server error while fetching team workspaces" });
   }
 };
 

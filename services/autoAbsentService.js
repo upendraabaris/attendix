@@ -105,12 +105,76 @@ const getActiveEmployeesByOrganization = async (organizationId) => {
       WHERE e.organization_id = $1
       AND COALESCE(e.status,'active') = 'active'
       AND LOWER(e.role) != 'admin'
+      AND e.id NOT IN (
+        SELECT employee_id FROM auto_absent_exclusions WHERE organization_id = $1
+      )
       ORDER BY e.id ASC
     `,
     [organizationId]
   );
 
   return result.rows;
+};
+
+/**
+ * Returns the employee ids currently excluded from Auto Absent processing
+ * for an organization (org-scoped — never returns another org's rows).
+ */
+const getExcludedEmployeeIds = async (organizationId) => {
+  const result = await pool.query(
+    `SELECT employee_id FROM auto_absent_exclusions WHERE organization_id = $1 ORDER BY employee_id ASC`,
+    [organizationId]
+  );
+  return result.rows.map((row) => row.employee_id);
+};
+
+/**
+ * Replaces the full exclusion list for an organization with the given
+ * employee ids. Ids are validated against `employees.organization_id`
+ * before insert — a client-supplied id belonging to another organization
+ * (or a non-existent employee) is silently dropped, never trusted.
+ * Does NOT touch auto_absent_settings.is_enabled — Auto Absent stays
+ * globally enabled/disabled independently of who is excluded.
+ */
+const setExcludedEmployees = async (organizationId, employeeIds = []) => {
+  const uniqueIds = [
+    ...new Set(
+      (Array.isArray(employeeIds) ? employeeIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    ),
+  ];
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM auto_absent_exclusions WHERE organization_id = $1`, [organizationId]);
+
+    if (uniqueIds.length > 0) {
+      const validResult = await client.query(
+        `SELECT id FROM employees WHERE organization_id = $1 AND id = ANY($2::int[])`,
+        [organizationId, uniqueIds]
+      );
+      const validIds = validResult.rows.map((row) => row.id);
+
+      if (validIds.length > 0) {
+        const valuePlaceholders = validIds.map((_, index) => `($1, $${index + 2})`).join(", ");
+        await client.query(
+          `INSERT INTO auto_absent_exclusions (organization_id, employee_id) VALUES ${valuePlaceholders}`,
+          [organizationId, ...validIds]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return getExcludedEmployeeIds(organizationId);
 };
 
 const hasClockInForDate = async (employeeId, workDate) => {
@@ -380,6 +444,8 @@ module.exports = {
   ABSENT_REASON,
   getAutoAbsentSetting,
   upsertAutoAbsentSetting,
+  getExcludedEmployeeIds,
+  setExcludedEmployees,
   processAutoAbsentForOrganization,
   processDueAutoAbsent,
   startAutoAbsentScheduler,

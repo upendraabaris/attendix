@@ -5,6 +5,7 @@ const {
   getMyAttendance,
   getEmployeeAttendance,
   getAllAttendance,
+  getTeamAttendance,
   getAttendanceByAdmin,
   getParticularAttendance,
   adminUpdateClockOut
@@ -35,6 +36,13 @@ router.get('/my', authenticate, getMyAttendance);
 
 
 router.get('/admin/all-employee-attendance', authenticate, authorizeRoles('admin'), getAllAttendance);
+
+/**
+ * @route GET /api/attendance/team
+ * @desc Get attendance for the logged-in employee's direct reports (Reporting Manager view)
+ * @access Private (any authenticated employee; returns empty data if caller has no direct reports)
+ */
+router.get('/team', authenticate, getTeamAttendance);
 
 router.post('/admin/get-single-attendance', authenticate, authorizeRoles('admin'), getAttendanceByAdmin);
 

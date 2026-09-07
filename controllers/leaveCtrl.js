@@ -417,6 +417,7 @@ const createLeaveRequest = async (req, res) => {
 
 const getMyLeaveRequests = async (req, res) => {
   const employeeId = req.user.employee_id;
+  const organizationId = req.user.organization_id;
 
   try {
     const result = await pool.query(
@@ -467,11 +468,26 @@ const getMyLeaveRequests = async (req, res) => {
       }),
     }));
 
+    // Whether the caller has direct reports at all — resolved independently
+    // of `teamRequests` above, which INNER JOINs against leave_requests and
+    // is therefore empty for a manager whose reports simply haven't
+    // submitted any leave request yet (that is NOT the same as "not a
+    // manager"). UI visibility of the Team tab must key off this, not off
+    // teamRequests.length.
+    const managerCheck = await pool.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM employees WHERE manager_id = $1 AND organization_id = $2
+       ) AS is_manager`,
+      [employeeId, organizationId]
+    );
+    const isManager = managerCheck.rows[0]?.is_manager === true;
+
     res.status(200).json({
       statusCode: 200,
       message: 'Leave requests retrieved successfully',
       data: formattedRows,
       teamRequests: formattedTeamRows, // 👈 naya field, empty array aayega agar koi reportee nahi
+      isManager, // true iff the caller has ≥1 direct report, regardless of whether any leave requests exist yet
     });
   } catch (error) {
     console.error('Error retrieving leave requests:', error);
@@ -512,6 +528,60 @@ const getMyLeaveBalances = async (req, res) => {
     return res.status(500).json({
       statusCode: 500,
       message: "Failed to retrieve leave balances",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * GET /leave/team-balances
+ * Returns leave balances for the logged-in employee's direct reports
+ * (Reporting Manager view). Team scope is resolved server-side from
+ * employees.manager_id using the caller's own employee_id from the JWT —
+ * never trusts a client-supplied employeeId. Callers with no direct
+ * reports simply get an empty array back.
+ */
+const getTeamLeaveBalancesCtrl = async (req, res) => {
+  const requesterId = req.user.employee_id;
+  const organizationId = req.user.organization_id;
+
+  if (!organizationId) {
+    return res.status(400).json({
+      statusCode: 400,
+      message: "Organization ID missing in token",
+    });
+  }
+
+  try {
+    const teamResult = await pool.query(
+      `SELECT id FROM employees WHERE manager_id = $1 AND organization_id = $2`,
+      [requesterId, organizationId]
+    );
+    const teamIds = teamResult.rows.map((row) => row.id);
+    const isManager = teamIds.length > 0;
+
+    if (teamIds.length === 0) {
+      return res.status(200).json({
+        statusCode: 200,
+        message: "Team leave balances retrieved successfully",
+        isManager,
+        data: [],
+      });
+    }
+
+    const report = await getOrganizationLeaveBalanceReport(organizationId, teamIds);
+
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Team leave balances retrieved successfully",
+      isManager,
+      data: report,
+    });
+  } catch (error) {
+    console.error("Error retrieving team leave balances:", error);
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to retrieve team leave balances",
       error: error.message,
     });
   }
@@ -982,6 +1052,7 @@ module.exports = {
   createLeaveRequest,
   getMyLeaveRequests,
   getMyLeaveBalances,
+  getTeamLeaveBalancesCtrl,
   getOrganizationLeaveBalanceReportCtrl,
   getEmployeeLeaveRequests,
   getAllLeaveRequests,

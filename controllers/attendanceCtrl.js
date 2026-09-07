@@ -313,6 +313,146 @@ const getAllAttendance = async (req, res) => {
   }
 };
 
+/**
+ * Get attendance for the logged-in employee's direct reports (Reporting Manager view).
+ * Team scope is resolved server-side from employees.manager_id using the caller's
+ * own employee_id from the JWT — never trusts a client-supplied employeeId.
+ * Employees with no direct reports simply get an empty array back.
+ *
+ * Optional query param `employeeId` narrows the result to one specific direct
+ * report — but it is validated against the manager's own team (manager_id +
+ * organization_id) before use; a client-supplied id that is not one of the
+ * caller's direct reports is rejected with 403, never silently trusted.
+ */
+const getTeamAttendance = async (req, res) => {
+  const requesterId = req.user.employee_id;
+  const organizationId = req.user.organization_id;
+  const { startDate, endDate, employeeId } = req.query;
+
+  const start = startDate || new Date(new Date().setDate(1)).toISOString().split('T')[0];
+  const end = endDate || new Date().toISOString().split('T')[0];
+
+  try {
+    const teamResult = await pool.query(
+      `SELECT id, name FROM employees WHERE manager_id = $1 AND organization_id = $2 ORDER BY name ASC`,
+      [requesterId, organizationId]
+    );
+    const teamIds = teamResult.rows.map((row) => row.id);
+    const directReports = teamResult.rows.map((row) => ({ id: row.id, name: row.name }));
+    const isManager = teamIds.length > 0;
+
+    if (teamIds.length === 0) {
+      return res.status(200).json({
+        statusCode: 200,
+        message: 'Attendance records retrieved successfully',
+        isManager,
+        directReports: [],
+        data: []
+      });
+    }
+
+    // Optional single-employee filter — must be one of the caller's own
+    // direct reports (already resolved above via manager_id + organization_id).
+    // Any other value (including an unrelated employee's id) is rejected.
+    let scopedEmployeeId = 0; // 0 = every direct report, per get_combined_attendance's own convention
+    const requestedEmployeeId = String(employeeId ?? '').trim();
+    if (requestedEmployeeId !== '' && requestedEmployeeId.toLowerCase() !== 'all') {
+      const parsedEmployeeId = parseInt(requestedEmployeeId, 10);
+      if (!Number.isInteger(parsedEmployeeId) || !teamIds.includes(parsedEmployeeId)) {
+        return res.status(403).json({
+          statusCode: 403,
+          message: 'You are not authorized to view attendance for this employee'
+        });
+      }
+      scopedEmployeeId = parsedEmployeeId;
+    }
+    const scopedIds = scopedEmployeeId ? [scopedEmployeeId] : teamIds;
+
+    const result = await pool.query(
+      'SELECT * FROM get_combined_attendance($1, $2, $3, $4)',
+      [scopedEmployeeId, start, end, organizationId]
+    );
+
+    let remarkMap = {};
+    try {
+      const remarkResult = await pool.query(
+        `SELECT
+           a.employee_id,
+           DATE(a.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::text AS work_date,
+           a.admin_remark
+         FROM attendance a
+         WHERE a.type = 'out'
+           AND a.admin_remark IS NOT NULL
+           AND a.employee_id = ANY($1::int[])
+           AND DATE(a.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') BETWEEN $2 AND $3`,
+        [scopedIds, start, end]
+      );
+      remarkResult.rows.forEach(r => {
+        remarkMap[`${r.work_date}-${r.employee_id}`] = r.admin_remark;
+      });
+    } catch (remarkErr) {
+      console.warn('Could not fetch admin_remark for team attendance:', remarkErr.message);
+    }
+
+    const updatedRows = result.rows
+      .filter((row) => scopedIds.includes(row.employee_id))
+      .map((row) => {
+        const inTime = row.clock_in ? new Date(new Date(row.clock_in).getTime() + 330 * 60 * 1000) : null;
+        const outTime = row.clock_out ? new Date(new Date(row.clock_out).getTime() + 330 * 60 * 1000) : null;
+
+        let workedTime = 'Missing Clock Out';
+
+        if (inTime && outTime) {
+          const diffMs = outTime - inTime;
+          if (diffMs > 0) {
+            const hrs = Math.floor(diffMs / (1000 * 60 * 60));
+            const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+            workedTime = `${hrs}h ${mins}m`;
+          } else {
+            workedTime = 'Invalid time (Out before In)';
+          }
+        }
+
+        const dateStr = inTime?.toISOString().split('T')[0] || null;
+        const adminRemark = dateStr ? (remarkMap[`${dateStr}-${row.employee_id}`] || null) : null;
+
+        return {
+          ...row,
+          raw_clock_in: inTime ? inTime.toISOString() : null,
+          raw_clock_out: outTime ? outTime.toISOString() : null,
+          clock_in: inTime?.toLocaleTimeString('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          }),
+          clock_out: outTime?.toLocaleTimeString('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          }),
+          worked_time: workedTime,
+          date: dateStr,
+          admin_remark: adminRemark
+        };
+      });
+
+    res.status(200).json({
+      statusCode: 200,
+      message: 'Attendance records retrieved successfully',
+      isManager,
+      directReports,
+      data: updatedRows
+    });
+  } catch (error) {
+    console.error('Error retrieving team attendance:', error);
+    res.status(500).json({
+      statusCode: 500,
+      message: 'Failed to retrieve team attendance records',
+      error: error.message
+    });
+  }
+};
+
 const getAttendanceByAdmin = async (req, res) => {
   const employeeId = req.body.employeeId;
   const { startDate, endDate } = req.query;
@@ -533,6 +673,7 @@ module.exports = {
   getMyAttendance,
   getEmployeeAttendance,
   getAllAttendance,
+  getTeamAttendance,
   getAttendanceByAdmin,
   getParticularAttendance,
   adminUpdateClockOut

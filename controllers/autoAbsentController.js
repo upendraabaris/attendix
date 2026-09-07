@@ -2,6 +2,8 @@ const {
   getAutoAbsentSetting,
   processAutoAbsentForOrganization,
   upsertAutoAbsentSetting,
+  getExcludedEmployeeIds,
+  setExcludedEmployees,
 } = require("../services/autoAbsentService");
 
 const ensureOrganization = (req, res) => {
@@ -85,8 +87,67 @@ const runAutoAbsentForDate = async (req, res) => {
   }
 };
 
+/**
+ * GET /auto-absent/exclusions (Admin only)
+ * Returns the employee ids currently excluded from Auto Absent processing.
+ */
+const fetchAutoAbsentExclusions = async (req, res) => {
+  const organizationId = ensureOrganization(req, res);
+  if (!organizationId) return;
+
+  try {
+    const employeeIds = await getExcludedEmployeeIds(organizationId);
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Auto absent exclusions retrieved successfully",
+      data: { employee_ids: employeeIds },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to retrieve auto absent exclusions",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * PUT /auto-absent/exclusions (Admin only)
+ * Body: { employee_ids: number[] } — replaces the full exclusion list.
+ * Does NOT change auto_absent_settings.is_enabled.
+ */
+const saveAutoAbsentExclusions = async (req, res) => {
+  const organizationId = ensureOrganization(req, res);
+  if (!organizationId) return;
+
+  const employeeIds = Array.isArray(req.body?.employee_ids) ? req.body.employee_ids : null;
+  if (!employeeIds) {
+    return res.status(400).json({
+      statusCode: 400,
+      message: "employee_ids array is required",
+    });
+  }
+
+  try {
+    const savedIds = await setExcludedEmployees(organizationId, employeeIds);
+    return res.status(200).json({
+      statusCode: 200,
+      message: "Auto absent exclusions saved successfully",
+      data: { employee_ids: savedIds },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Failed to save auto absent exclusions",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   fetchAutoAbsentSetting,
   saveAutoAbsentSetting,
   runAutoAbsentForDate,
+  fetchAutoAbsentExclusions,
+  saveAutoAbsentExclusions,
 };

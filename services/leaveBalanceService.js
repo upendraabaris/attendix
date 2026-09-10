@@ -51,9 +51,99 @@ const getEmployeeOrgInfo = async (employeeId) => {
   };
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// total_entitled — a READ-ONLY figure shown next to (never instead of) balance.
+//
+//   balance         = current entitlement − used + previous cycle's UNUSED days
+//                     (the carry-forward flow; untouched by anything below)
+//   total_entitled  = previous cycle's ORIGINAL entitlement + current cycle's
+//                     entitlement, when carry-forward is ON
+//
+// It therefore never reads carry_forward_balance: an employee who consumed the
+// whole previous cycle still gets the previous entitlement counted here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Types that never carry forward, so their total is always a single cycle.
+const NO_CARRY_FORWARD_TOTAL_TYPES = ["paternity", "unpaid", "compensation"];
+const RULE_BASED_TOTAL_TYPES = ["earned", "casual"];
+
+/**
+ * Returns the immediately previous cycle only when it genuinely exists, else null.
+ * Uses the same three guards as the carry-forward sync so total_entitled counts a
+ * previous cycle in exactly the cases where carry-forward would have applied:
+ *   1. the previous cycle is earlier than the current one
+ *   2. it has actually ended
+ *   3. the employee already existed during it
+ * Works for all three renewal modes because getLeaveCycle resolves the mode.
+ */
+const getPreviousCompletedCycle = (joiningDate, cycleStart, renewalType) => {
+  if (!joiningDate) return null;
+
+  const prevRef = new Date(cycleStart);
+  if (Number.isNaN(prevRef.getTime())) return null;
+  prevRef.setUTCDate(prevRef.getUTCDate() - 1);
+
+  const { start: prevStart, end: prevEnd } = getLeaveCycle(joiningDate, prevRef, renewalType);
+  const todayStr = new Date().toISOString().split("T")[0];
+  const joiningDateStr = new Date(joiningDate).toISOString().split("T")[0];
+
+  if (prevStart < cycleStart && prevEnd < todayStr && joiningDateStr <= prevEnd) {
+    return { start: prevStart, end: prevEnd };
+  }
+
+  return null;
+};
+
+/**
+ * Accrued entitlement for one cycle for the rule-based types (earned/casual).
+ * Mirrors the accrual formula used by syncEarnedLeaveBalanceForEmployee, but
+ * returns the entitlement (credits) rather than the post-consumption balance.
+ */
+const getAccruedEntitlementForCycle = async (employeeId, policyRow, start, end) => {
+  const daysRequired = Number(policyRow.earned_days_required || 0);
+  const award = Number(policyRow.earned_leave_award || 0);
+  if (!daysRequired || !award) return 0;
+
+  const presentDays = await getPresentWorkingDays(employeeId, start, end);
+  const credits = Math.floor(presentDays / daysRequired) * award;
+
+  // earned is capped by yearly_limit (0 = uncapped); casual has no annual cap
+  if (policyRow.leave_type === "earned") {
+    const limit = Number(policyRow.yearly_limit || 0);
+    return limit > 0 ? Math.min(credits, limit) : credits;
+  }
+  return credits;
+};
+
+const computeTotalEntitled = async (employeeId, row, cycleStart, cycleEnd, previousCycle) => {
+  const carryForwardApplies =
+    Boolean(row.carry_forward_enabled) &&
+    Boolean(previousCycle) &&
+    !NO_CARRY_FORWARD_TOTAL_TYPES.includes(row.leave_type);
+
+  if (RULE_BASED_TOTAL_TYPES.includes(row.leave_type)) {
+    const current = await getAccruedEntitlementForCycle(employeeId, row, cycleStart, cycleEnd);
+    if (!carryForwardApplies) return current;
+
+    const previous = await getAccruedEntitlementForCycle(
+      employeeId,
+      row,
+      previousCycle.start,
+      previousCycle.end
+    );
+    return current + previous;
+  }
+
+  // Yearly-limit types. yearly_limit is not versioned per cycle, so the previous
+  // cycle's original entitlement is represented by the same configured limit.
+  const yearlyLimit = Number(row.yearly_limit || 0);
+  return carryForwardApplies ? yearlyLimit * 2 : yearlyLimit;
+};
+
 const getEmployeeLeaveBalances = async (employeeId) => {
   const { joiningDate, renewalType } = await getEmployeeOrgInfo(employeeId);
   const { start: cycleStart, end: cycleEnd } = getLeaveCycle(joiningDate, new Date(), renewalType);
+  const previousCycle = getPreviousCompletedCycle(joiningDate, cycleStart, renewalType);
 
   // 
 //   const result = await pool.query(
@@ -115,7 +205,13 @@ const result = await pool.query(
       )
     END AS balance,
 
-    elb.updated_at
+    elb.updated_at,
+
+    -- policy inputs for total_entitled only; stripped before the response
+    lp.yearly_limit,
+    lp.carry_forward_enabled,
+    lp.earned_days_required,
+    lp.earned_leave_award
 
   FROM leave_policies lp
 
@@ -184,11 +280,29 @@ const result = await pool.query(
       row.leave_type
     );
 
+    const totalEntitled = await computeTotalEntitled(
+      employeeId,
+      row,
+      cycleStart,
+      cycleEnd,
+      previousCycle
+    );
+
+    // Keep the policy inputs out of the response — they are only used above.
+    const {
+      yearly_limit: _yearlyLimit,
+      carry_forward_enabled: _carryForwardEnabled,
+      earned_days_required: _earnedDaysRequired,
+      earned_leave_award: _earnedLeaveAward,
+      ...responseRow
+    } = row;
+
     return {
-      ...row,
+      ...responseRow,
       accrued_balance: Number(row.balance || 0),
       pending_days: pendingDays,
       balance: Number(row.balance || 0),
+      total_entitled: totalEntitled,
     };
   })
 );
@@ -213,6 +327,12 @@ const mergeCompOffIntoBalances = async (employeeId, organizationId, balances = [
       balance: Number(compOffBalance.available_balance || 0),
       accrued_balance: Number(compOffBalance.available_balance || 0),
       pending_days: Number(compOffBalance.pending_days || 0),
+      // Total = comp-off actually granted and not expired, never the yearly policy
+      // limit. available_balance is already net of pending, so pending is added back.
+      total_entitled:
+        Number(compOffBalance.used_count || 0) +
+        Number(compOffBalance.available_balance || 0) +
+        Number(compOffBalance.pending_days || 0),
       updated_at: null,
     };
 
@@ -1095,6 +1215,7 @@ const getOrganizationLeaveBalanceReport = async (organizationId, employeeIds = n
           accrued_balance: Number(balance.accrued_balance ?? balance.balance ?? 0),
           used_days: Number(balance.used_days || 0),
           pending_days: Number(balance.pending_days || 0),
+          total_entitled: Number(balance.total_entitled || 0),
         };
         return acc;
       }, {});

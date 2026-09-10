@@ -1,5 +1,6 @@
 const pool = require("../configure/dbConfig");
 const { uploadToS3 } = require("../services/s3Uploader");
+const { sendSupportTicketEmail } = require("../services/emailService");
 
 const buildAttachmentUrl = (attachmentPath) => {
   if (!attachmentPath) {
@@ -117,6 +118,19 @@ const createSupportTicket = async (req, res) => {
     );
 
     const ticket = await getTicketById(result.rows[0].id);
+
+    try {
+      await sendSupportTicketEmail({
+        organizationName: ticket.organization_name,
+        employeeName: ticket.employee_name,
+        ticket: {
+          title: ticket.title,
+          description: ticket.description,
+        },
+      });
+    } catch (emailError) {
+      console.error("Failed to send support ticket email:", emailError.message);
+    }
 
     return res.status(201).json({
       statusCode: 201,

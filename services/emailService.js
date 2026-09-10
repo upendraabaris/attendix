@@ -262,6 +262,15 @@ function getRequestRecipients({ managerEmail, adminEmail }) {
   return emails;
 }
 
+// ADMIN_EMAIL + SUPPORT_EMAIL, deduped, for support-ticket notifications
+function getSupportNotificationRecipients() {
+  const emails = [process.env.ADMIN_EMAIL, process.env.SUPPORT_EMAIL]
+    .filter(Boolean)
+    .map((e) => e.trim())
+    .filter((e, idx, arr) => arr.indexOf(e) === idx);
+  return emails;
+}
+
 // Base URL of the deployed Attendix frontend.
 // 👉 Set FRONTEND_URL in your .env, e.g. FRONTEND_URL=https://admin.attendixapp.com
 function getAppUrl(path = '') {
@@ -555,6 +564,49 @@ async function sendLeaveStatusEmail({ employeeEmail, employeeName, organizationN
   return sendMail({ from, ...mail });
 }
 
+/* ===================== SUPPORT TICKET (new) ===================== */
+
+function buildSupportTicketEmail({ organizationName, employeeName, ticket }) {
+  const subject = `[${organizationName || 'Attendix'}] New support ticket: ${ticket.title}`;
+
+  const rows = [
+    renderInfoRow('Raised By', employeeName),
+    renderInfoRow('Organization', organizationName),
+    renderInfoRow('Title', ticket.title),
+    renderInfoRow('Description', ticket.description, true)
+  ].join('');
+
+  const bodyHtml = `
+    <p style="color:#4b5563; font-size:14px; line-height:1.5; margin: 0 0 4px 0;">
+      A new support ticket has been submitted and is waiting for a response.
+    </p>
+    ${renderInfoCard(rows)}
+    ${renderButton(getAppUrl('/login'), 'View in Attendix')}
+  `;
+
+  const html = renderEmailShell({
+    icon: '🛟',
+    headline: 'New Support Ticket',
+    bodyHtml
+  });
+
+  return {
+    to: getSupportNotificationRecipients(),
+    subject,
+    html
+  };
+}
+
+async function sendSupportTicketEmail({ organizationName, employeeName, ticket }) {
+  const recipients = getSupportNotificationRecipients();
+  if (!recipients.length) {
+    throw new Error('ADMIN_EMAIL/SUPPORT_EMAIL is not configured');
+  }
+  const mail = buildSupportTicketEmail({ organizationName, employeeName, ticket });
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER || 'no-reply@attendix.local';
+  return sendMail({ from, ...mail });
+}
+
 /* ===================== CREDENTIALS & AUTO-ABSENT (unchanged) ===================== */
 
 function buildEmployeeCredentialsEmail({ employeeEmail, employeeName, organizationName, password }) {
@@ -655,5 +707,6 @@ module.exports = {
   sendEmployeeCredentialsEmail,
   sendAutoAbsentEmail,
   sendNewWfhRequestEmail,
-  sendWfhStatusEmail
+  sendWfhStatusEmail,
+  sendSupportTicketEmail
 };

@@ -263,14 +263,15 @@ const getEmployeeById = async (req, res) => {
 
     const employee = result.rows[0];
 
-    // get_employee_by_id() SQL function manager_id return nahi karta,
-    // isliye alag se fetch karke response mein merge karo
+    // get_employee_by_id() SQL function manager_id/expected_clock_in_time
+    // return nahi karta, isliye alag se fetch karke response mein merge karo
     try {
       const managerRes = await pool.query(
-        `SELECT manager_id FROM employees WHERE id = $1`,
+        `SELECT manager_id, expected_clock_in_time FROM employees WHERE id = $1`,
         [id]
       );
       employee.manager_id = managerRes.rows[0]?.manager_id ?? null;
+      employee.expected_clock_in_time = managerRes.rows[0]?.expected_clock_in_time ?? null;
     } catch (managerErr) {
       console.error("Could not fetch manager_id for employee:", managerErr.message);
     }
@@ -292,7 +293,8 @@ const updateEmployee = async (req, res) => {
     phone,
     role,
     status, // ✅ Include status from frontend
-    manager_id
+    manager_id,
+    expected_clock_in_time
   } = req.body;
 
   const role_check = String(req.user?.role || "").toLowerCase();
@@ -309,6 +311,13 @@ const updateEmployee = async (req, res) => {
       await pool.query(
         `UPDATE employees SET manager_id = $1 WHERE id = $2`,
         [manager_id || null, id]
+      );
+    }
+
+    if (expected_clock_in_time !== undefined && isAdmin) {
+      await pool.query(
+        `UPDATE employees SET expected_clock_in_time = $1 WHERE id = $2`,
+        [expected_clock_in_time || null, id]
       );
     }
 

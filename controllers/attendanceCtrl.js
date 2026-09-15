@@ -2,6 +2,7 @@ const pool = require("../configure/dbConfig");
 const { reverseGeocode, reverseGeocodeGoogle } = require('../services/geocodingService');
 const { syncEarnedLeaveBalanceForEmployee } = require("../services/leaveBalanceService");
 const { earnCompOff } = require("../services/compOffService");
+const { awardPunctuality } = require("../services/rewardPointsService");
 
 
 const formatToIST = (utcDateTimeString) => {
@@ -31,6 +32,18 @@ const clockIn = async (req, res) => {
       'SELECT * FROM clock_in($1, $2, $3, $4)',
       [employeeId, latitude, longitude, address]
     );
+
+    // Attempt the punctuality reward (non-blocking, idempotent).
+    // Only the first IN punch of the IST day can earn points, and a reward
+    // failure must never break clock-in. See REWARD_POINTS_MODULE.md M6.
+    try {
+      const punchId = result.rows[0]?.id;
+      if (punchId) {
+        await awardPunctuality({ employeeId, attendanceId: punchId });
+      }
+    } catch (rewardError) {
+      console.error('Reward points award failed for clock-in:', rewardError.message);
+    }
 
     res.status(201).json({
       statusCode: 201,

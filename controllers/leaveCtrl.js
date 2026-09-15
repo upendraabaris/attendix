@@ -7,6 +7,7 @@ const { getEmployeeLeaveBalances } = require("../services/leaveBalanceService");
 const { getOrganizationLeaveBalanceReport } = require("../services/leaveBalanceService");
 const { getEmployeeLeaveBalanceHistory } = require("../services/leaveBalanceService");
 const { uploadToS3 } = require("../services/s3Uploader");
+const { awardLeaveEarlyApplication } = require("../services/rewardPointsService");
 
 const getRequestedDays = (startDate, endDate) =>
   Math.floor(
@@ -1031,6 +1032,17 @@ const updateLeaveRequestStatus = async (req, res) => {
       });
     } catch (pushError) {
       console.error('Failed to send leave status push notification:', pushError.message);
+    }
+
+    // Attempt the leave early-application reward (non-blocking, idempotent).
+    // Points are granted only on approval; a reward failure must never turn a
+    // successful approval into a failed one. See REWARD_POINTS_MODULE.md M5.
+    if (status === 'approved') {
+      try {
+        await awardLeaveEarlyApplication({ leaveRequestId: parseInt(leaveId) });
+      } catch (rewardError) {
+        console.error('Reward points award failed for leave approval:', rewardError.message);
+      }
     }
 
     return res.status(200).json({
